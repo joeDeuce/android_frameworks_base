@@ -128,6 +128,12 @@ static void android_server_PowerManagerService_nativeStartSurfaceFlingerAnimatio
     s->turnElectronBeamOff(mode);
 }
 
+static void android_server_PowerManagerService_nativeStartSurfaceFlingerAnimationOn(JNIEnv* env,   
+         jobject obj, jint mode) {   
+     sp<ISurfaceComposer> s(ComposerService::getComposerService());   
+     s->turnElectronBeamOn(mode);   
+}
+
 // ----------------------------------------------------------------------------
 
 static JNINativeMethod gPowerManagerServiceMethods[] = {
@@ -138,6 +144,8 @@ static JNINativeMethod gPowerManagerServiceMethods[] = {
             (void*) android_server_PowerManagerService_nativeSetPowerState },
     { "nativeStartSurfaceFlingerAnimation", "(I)V",
             (void*) android_server_PowerManagerService_nativeStartSurfaceFlingerAnimation },
+    { "nativeStartSurfaceFlingerAnimationOn", "(I)V",   
+            (void*) android_server_PowerManagerService_nativeStartSurfaceFlingerAnimationOn }, 
 };
 
 #define FIND_CLASS(var, className) \
