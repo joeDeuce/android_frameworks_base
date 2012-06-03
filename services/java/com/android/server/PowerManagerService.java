@@ -259,7 +259,7 @@ public class PowerManagerService extends IPowerManager.Stub
     boolean mUnplugTurnsOnScreen;
     private int mWarningSpewThrottleCount;
     private long mWarningSpewThrottleTime;
-    private int mAnimationSetting = ANIM_SETTING_OFF;
+    private int mAnimationSetting = ANIM_SETTING_OFF | ANIM_SETTING_ON;
     private boolean mAnimateCrtOff = false;
     private boolean mAnimateCrtOn = false;
     // When using software auto-brightness, determines whether (true) button
@@ -316,6 +316,7 @@ public class PowerManagerService extends IPowerManager.Stub
     private native void nativeInit();
     private native void nativeSetPowerState(boolean screenOn, boolean screenBright);
     private native void nativeStartSurfaceFlingerAnimation(int mode);
+    private native void nativeStartSurfaceFlingerAnimationOn(int mode);
 
     /*
     static PrintStream mLog;
@@ -531,7 +532,7 @@ public class PowerManagerService extends IPowerManager.Stub
                 // }
                 // if (transitionScale > 0.5f) {
                 // Uncomment this if you want the screen-on animation.
-                // mAnimationSetting |= ANIM_SETTING_ON;
+                mAnimationSetting |= ANIM_SETTING_ON;
                 // }
             }
         }
@@ -2303,10 +2304,20 @@ public class PowerManagerService extends IPowerManager.Stub
             }
         }
 
+void jumpToTarget() {   
+             if (mSpew) Slog.d(TAG, "jumpToTarget targetValue=" + targetValue + ": " + mask);   
+             setLightBrightness(mask, targetValue);   
+             final int tv = targetValue;   
+             curValue = tv;   
+             targetValue = -1;   
+         } 
+
         public void run() {
             synchronized (mLocks) {
                 // we're turning off
                 final boolean turningOff = animating && targetValue == Power.BRIGHTNESS_OFF;
+                final boolean turningOn = animating && curValue == Power.BRIGHTNESS_OFF;
+
                 final boolean crtAnimate = animating &&
                         ((mAnimateCrtOff && targetValue == Power.BRIGHTNESS_OFF) ||
                         (mAnimateCrtOn && (int) curValue == Power.BRIGHTNESS_OFF));
@@ -2320,8 +2331,14 @@ public class PowerManagerService extends IPowerManager.Stub
                 } else {
                         // It's pretty scary to hold mLocks for this long, and we should
                         // redesign this, but it works for now.
-                        nativeStartSurfaceFlingerAnimation(mScreenOffReason == WindowManagerPolicy.OFF_BECAUSE_OF_PROX_SENSOR
+			if (turningOff) {
+	                        nativeStartSurfaceFlingerAnimation(mScreenOffReason == WindowManagerPolicy.OFF_BECAUSE_OF_PROX_SENSOR
                                 ? 0 : mAnimationSetting);
+			} else if (turningOn) {   
+                 		jumpToTarget();   
+                 		nativeStartSurfaceFlingerAnimationOn(mAnimationSetting);   
+                 		animating = false;   
+                 	} 
                         mScreenBrightness.jumpToTargetLocked(); 
                 }
             }
