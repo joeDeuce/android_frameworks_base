@@ -178,27 +178,12 @@ status_t Layer::setBuffers( uint32_t w, uint32_t h,
     mSurfaceTexture->setDefaultBufferSize(w, h);
     mSurfaceTexture->setDefaultBufferFormat(format);
 
-    if (mFlinger->getUseDithering()) {
-        // we use the red index
-        int displayRedSize = displayInfo.getSize(PixelFormatInfo::INDEX_RED);
-        int layerRedsize = info.getSize(PixelFormatInfo::INDEX_RED);
-        mNeedsDithering = layerRedsize > displayRedSize;
-    } else {
-        mNeedsDithering = false;
-    }
+    // we use the red index
+    int displayRedSize = displayInfo.getSize(PixelFormatInfo::INDEX_RED);
+    int layerRedsize = info.getSize(PixelFormatInfo::INDEX_RED);
+    mNeedsDithering = layerRedsize > displayRedSize;
 
     return NO_ERROR;
-}
-
-bool Layer::isRotated() const {
-
-    const Layer::State& front(drawingState());
-
-    if( (front.w == front.requested_w) &&
-        (front.h == front.requested_h) ) {
-        return true;
-    }
-    return false;
 }
 
 void Layer::setGeometry(hwc_layer_t* hwcl)
@@ -212,9 +197,13 @@ void Layer::setGeometry(hwc_layer_t* hwcl)
     // we can't do alpha-fade with the hwc HAL. C2D composition
     // can handle fade cases
     const State& s(drawingState());
-    if ((s.alpha < 0xFF) &&
-        !(DisplayHardware::C2D_COMPOSITION & hw.getFlags())) {
-        hwcl->flags = HWC_SKIP_LAYER;
+    if (s.alpha < 0xFF) {
+        if ((DisplayHardware::C2D_COMPOSITION & hw.getFlags()) && (!isOpaque())) {
+            hwcl->blending = mPremultipliedAlpha ?
+                HWC_BLENDING_PREMULT : HWC_BLENDING_COVERAGE;
+        } else {
+            hwcl->flags = HWC_SKIP_LAYER;
+        }
     }
 
     hwcl->alpha = s.alpha;
@@ -325,31 +314,29 @@ void Layer::onDraw(const Region& clip) const
 	}
 #endif
 
-    GLuint currentTextureTarget = mSurfaceTexture->getCurrentTextureTarget();
-
     if (!isProtected()) {
-        glBindTexture(currentTextureTarget, mTextureName);
+        glBindTexture(GL_TEXTURE_EXTERNAL_OES, mTextureName);
         GLenum filter = GL_NEAREST;
         if (getFiltering() || needsFiltering() || isFixedSize() || isCropped()) {
             // TODO: we could be more subtle with isFixedSize()
             filter = GL_LINEAR;
         }
-        glTexParameterx(currentTextureTarget, GL_TEXTURE_MAG_FILTER, filter);
-        glTexParameterx(currentTextureTarget, GL_TEXTURE_MIN_FILTER, filter);
+        glTexParameterx(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, filter);
+        glTexParameterx(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, filter);
         glMatrixMode(GL_TEXTURE);
         glLoadMatrixf(mTextureMatrix);
         glMatrixMode(GL_MODELVIEW);
         glDisable(GL_TEXTURE_2D);
-        glEnable(currentTextureTarget);
+        glEnable(GL_TEXTURE_EXTERNAL_OES);
     } else {
-        glBindTexture(currentTextureTarget, mFlinger->getProtectedTexName());
+        glBindTexture(GL_TEXTURE_2D, mFlinger->getProtectedTexName());
         glMatrixMode(GL_TEXTURE);
         glLoadIdentity();
         glMatrixMode(GL_MODELVIEW);
-        glEnable(currentTextureTarget);
+        glDisable(GL_TEXTURE_EXTERNAL_OES);
+        glEnable(GL_TEXTURE_2D);
     }
 
-#ifdef QCOM_HARDWARE
     if(needsDithering()) {
         glEnable(GL_DITHER);
     }
@@ -359,17 +346,11 @@ void Layer::onDraw(const Region& clip) const
         drawS3DUIWithOpenGL(clip);
     else
         drawWithOpenGL(clip);
-#else
-    drawWithOpenGL(clip);
-#endif
-
     glDisable(GL_TEXTURE_EXTERNAL_OES);
     glDisable(GL_TEXTURE_2D);
-#ifdef QCOM_HARDWARE
     if(needsDithering()) {
         glDisable(GL_DITHER);
     }
-#endif
 }
 
 // As documented in libhardware header, formats in the range
@@ -478,17 +459,7 @@ void Layer::lockPageFlip(bool& recomputeVisibleRegions)
             mFlinger->signalEvent();
         }
 
-#ifdef QCOM_HARDWARE
-        // While calling updateTexImage() from SurfaceFlinger, let it know
-        // by passing an extra parameter
-        // This will be true always.
-
-        bool isComposition = true;
-
-        if (mSurfaceTexture->updateTexImage(isComposition) < NO_ERROR) {
-#else
         if (mSurfaceTexture->updateTexImage() < NO_ERROR) {
-#endif
             // something happened!
             recomputeVisibleRegions = true;
             return;
@@ -668,4 +639,3 @@ uint32_t Layer::getTransformHint() const {
 
 
 }; // namespace android
-

@@ -2534,6 +2534,12 @@ public final class Settings {
         public static final String STATUS_BAR_LAYOUT = "status_bar_layout";
 
         /**
+        * AutoHide CombinedBar on tablets.
+        * @hide
+        */
+        public static final String COMBINED_BAR_AUTO_HIDE = "combined_bar_auto_hide";
+
+        /**
          * @hide
          */
         public static final String POWER_DIALOG_SHOW_POWER_SAVER = "power_dialog_show_power_saver";
@@ -2778,6 +2784,12 @@ public final class Settings {
         public static final String STATUSBAR_BATTERY_BAR_COLOR = "statusbar_battery_bar_color";
 
         /**
+         * Show the pending notification counts as overlays on the status bar
+         * @hide
+         */
+        public static final String STATUS_BAR_NOTIF_COUNT = "status_bar_notif_count";
+
+        /**
          * Last state of the quick toggles, to restore on boot
          * @hide
          */
@@ -2819,6 +2831,13 @@ public final class Settings {
          * @hide
          */
         public static final String RECENT_APP_SWITCHER = "recent_app_switcher";
+
+        /**
+         * whether to hide the kill-all-button on recent switcher
+         *
+         * @hide
+         */
+        public static final String RECENT_KILL_ALL_BUTTON = "recent_kill_all_button";
 
         /**
          * thickness of the batteyr bar (in dp)

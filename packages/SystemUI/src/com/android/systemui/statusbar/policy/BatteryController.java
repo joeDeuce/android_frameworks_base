@@ -68,7 +68,12 @@ public class BatteryController extends LinearLayout {
     public static final int STYLE_ICON_HONEY = 6;
     public static final int STYLE_ICON_GENX = 7;
     public static final int STYLE_ICON_BW = 8;
-    public static final int STYLE_HIDE = 9;
+    public static final int STYLE_ICON_GOTHAM = 9;
+    public static final int STYLE_ICON_CIRCLE_SMOOTH = 10;
+    public static final int STYLE_ICON_SKULL = 11;
+    public static final int STYLE_ICON_FUEL = 12;
+    public static final int STYLE_HIDE = 13;
+    public static final int STYLE_ICON_GOTHAM2 = 14;
 
     public BatteryController(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -144,6 +149,21 @@ public class BatteryController extends LinearLayout {
 	} else if (mBatteryStyle == STYLE_ICON_BW) {
             icon = plugged ? R.drawable.stat_sys_battery_charge_bw
                     : R.drawable.stat_sys_battery_bw;
+	} else if (mBatteryStyle == STYLE_ICON_GOTHAM) {
+            icon = plugged ? R.drawable.stat_sys_battery_charge_gotham
+                    : R.drawable.stat_sys_battery_gotham;
+	} else if (mBatteryStyle == STYLE_ICON_GOTHAM2) {
+            icon = plugged ? R.drawable.stat_sys_battery_charge_gotham2
+                    : R.drawable.stat_sys_battery_gotham2;
+	} else if (mBatteryStyle == STYLE_ICON_CIRCLE_SMOOTH) {
+            icon = plugged ? R.drawable.stat_sys_battery_charge_circle_smooth
+                    : R.drawable.stat_sys_battery_circle_smooth;
+	} else if (mBatteryStyle == STYLE_ICON_SKULL) {
+            icon = plugged ? R.drawable.stat_sys_battery_charge_skull
+                    : R.drawable.stat_sys_battery_skull;
+	} else if (mBatteryStyle == STYLE_ICON_FUEL) {
+            icon = plugged ? R.drawable.stat_sys_battery_charge_fuel
+                    : R.drawable.stat_sys_battery_fuel;
         } else {
             icon = plugged ? R.drawable.stat_sys_battery_charge
                     : R.drawable.stat_sys_battery;
@@ -256,41 +276,6 @@ public class BatteryController extends LinearLayout {
                 mBatteryIcon.setVisibility(View.GONE);
                 mBatteryTextOnly.setVisibility(View.GONE);
                 setVisibility(View.GONE);
-                break;
-            case STYLE_ICON_CIRCLE:
-                mBatteryText.setVisibility(View.GONE);
-                mBatteryCenterText.setVisibility(View.GONE);
-                mBatteryIcon.setVisibility(View.VISIBLE);
-                mBatteryTextOnly.setVisibility(View.GONE);
-                setVisibility(View.VISIBLE);
-                break;
-	    case STYLE_ICON_GUMMY:
-                mBatteryText.setVisibility(View.GONE);
-                mBatteryCenterText.setVisibility(View.GONE);
-                mBatteryIcon.setVisibility(View.VISIBLE);
-                mBatteryTextOnly.setVisibility(View.GONE);
-                setVisibility(View.VISIBLE);
-                break;
-	    case STYLE_ICON_HONEY:
-                mBatteryText.setVisibility(View.GONE);
-                mBatteryCenterText.setVisibility(View.GONE);
-                mBatteryIcon.setVisibility(View.VISIBLE);
-                mBatteryTextOnly.setVisibility(View.GONE);
-                setVisibility(View.VISIBLE);
-                break;
-	    case STYLE_ICON_GENX:
-                mBatteryText.setVisibility(View.GONE);
-                mBatteryCenterText.setVisibility(View.GONE);
-                mBatteryIcon.setVisibility(View.VISIBLE);
-                mBatteryTextOnly.setVisibility(View.GONE);
-                setVisibility(View.VISIBLE);
-                break;
-	    case STYLE_ICON_BW:
-                mBatteryText.setVisibility(View.GONE);
-                mBatteryCenterText.setVisibility(View.GONE);
-                mBatteryIcon.setVisibility(View.VISIBLE);
-                mBatteryTextOnly.setVisibility(View.GONE);
-                setVisibility(View.VISIBLE);
                 break;
             default:
                 mBatteryText.setVisibility(View.GONE);

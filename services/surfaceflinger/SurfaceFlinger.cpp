@@ -72,10 +72,6 @@
 
 #define DISPLAY_COUNT       1
 
-#ifdef USE_LGE_HDMI
-extern "C" void NvDispMgrAutoOrientation(int rotation);
-#endif
-
 namespace android {
 // ---------------------------------------------------------------------------
 
@@ -109,11 +105,10 @@ SurfaceFlinger::SurfaceFlinger()
 #ifdef QCOM_HARDWARE
         mCanSkipComposition(false),
 #endif
-        mSecureFrameBuffer(0),
-        mUseDithering(false)
 #ifdef QCOM_HDMI_OUT
         mExtDispOutput(EXT_TYPE_NONE),
 #endif
+        mSecureFrameBuffer(0)
 {
     init();
 }
@@ -133,10 +128,6 @@ void SurfaceFlinger::init()
 
     property_get("debug.sf.ddms", value, "0");
     mDebugDDMS = atoi(value);
-
-    property_get("persist.sys.use_dithering", value, "0");
-    mUseDithering = atoi(value) == 1;
-
     if (mDebugDDMS) {
         DdmConnection::start(getServiceName());
     }
@@ -144,7 +135,6 @@ void SurfaceFlinger::init()
     LOGI_IF(mDebugRegion,       "showupdates enabled");
     LOGI_IF(mDebugBackground,   "showbackground enabled");
     LOGI_IF(mDebugDDMS,         "DDMS debugging enabled");
-    LOGI_IF(mUseDithering,      "use dithering");
 }
 
 SurfaceFlinger::~SurfaceFlinger()
@@ -449,11 +439,6 @@ bool SurfaceFlinger::threadLoop()
     if (UNLIKELY(mHwWorkListDirty)) {
         // build the h/w work list
         handleWorkList();
-    }
-
-    if (isRotationCompleted() == false) {
-        LOGD("Rotation is not finished. Skip the composition");
-        return true;
     }
 
     const DisplayHardware& hw(graphicPlane(0).displayHardware());
@@ -854,19 +839,6 @@ void SurfaceFlinger::unlockPageFlip(const LayerVector& currentLayers)
     }
 }
 
-bool SurfaceFlinger::isRotationCompleted()
-{
-    const Vector< sp<LayerBase> >& currentLayers(mVisibleLayersSortedByZ);
-    const size_t count = currentLayers.size();
-
-    for (size_t i=0 ; i<count ; i++) {
-        if (currentLayers[i]->isRotated() == false) {
-            return false;
-        }
-    }
-    return true;
-}
-
 void SurfaceFlinger::handleWorkList()
 {
     mHwWorkListDirty = false;
@@ -1047,9 +1019,7 @@ void SurfaceFlinger::setupHardwareComposer(Region& dirtyInOut)
                     dirtyInOut.orSelf(layer->visibleRegionScreen);
                 }
                 layer->setOverlay(isOverlay);
-#ifdef QCOM_HARDWARE
                 layer->mQCLayer->setS3DComposeFormat(cur[i].hints);
-#endif
             }
             // don't erase stuff outside the dirty region
             transparent.andSelf(dirtyInOut);
@@ -1639,11 +1609,6 @@ uint32_t SurfaceFlinger::setClientStateLocked(
 
 void SurfaceFlinger::screenReleased(int dpy)
 {
-#ifdef SURFACEFLINGER_FORCE_SCREEN_RELEASE
-    const DisplayHardware& hw = graphicPlane(0).displayHardware();
-    hw.releaseScreen();
-#endif
-
     // this may be called by a signal handler, we can't do too much in here
     android_atomic_or(eConsoleReleased, &mConsoleSignals);
     signalEvent();
@@ -2163,11 +2128,6 @@ status_t SurfaceFlinger::electronBeamOffAnimationImplLocked()
     glDeleteTextures(1, &tname);
     glDisable(GL_TEXTURE_2D);
     glDisable(GL_BLEND);
-
-#ifdef SURFACEFLINGER_FORCE_SCREEN_RELEASE
-    hw.releaseScreen();
-#endif
-
     return NO_ERROR;
 }
 
@@ -2183,7 +2143,7 @@ status_t SurfaceFlinger::electronBeamOnAnimationImplLocked()
     const DisplayHardware& hw(graphicPlane(0).displayHardware());
     const uint32_t hw_w = hw.getWidth();
     const uint32_t hw_h = hw.getHeight();
-    const Region screenBounds(hw.bounds());
+    const Region screenBounds(hw.getBounds());
 
     GLfloat u, v;
     GLuint tname;
@@ -2193,9 +2153,9 @@ status_t SurfaceFlinger::electronBeamOnAnimationImplLocked()
     }
 
     GLfloat vtx[8];
-    const GLfloat texCoords[4][2] = { {0,v}, {0,0}, {u,0}, {u,v} };
+    const GLfloat texCoords[4][2] = { {0,0}, {0,v}, {u,v}, {u,0} };
     glBindTexture(GL_TEXTURE_2D, tname);
-    glTexEnvx(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    glTexEnvx(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
     glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexCoordPointer(2, GL_FLOAT, 0, texCoords);
@@ -2252,7 +2212,7 @@ status_t SurfaceFlinger::electronBeamOnAnimationImplLocked()
     };
 
     // the full animation is 12 frames
-    int nbFrames = 8;
+    int nbFrames = 12;
     s_curve_interpolator itr(nbFrames, 7.5f);
     s_curve_interpolator itg(nbFrames, 8.0f);
     s_curve_interpolator itb(nbFrames, 8.5f);
@@ -2270,8 +2230,14 @@ status_t SurfaceFlinger::electronBeamOnAnimationImplLocked()
         hw.flip(screenBounds);
     }
 
-    nbFrames = 4;
+    //nbFrames = 4;
     v_stretch vverts(hw_w, hw_h);
+    
+    glMatrixMode(GL_TEXTURE);   
+    glLoadIdentity();   
+    glMatrixMode(GL_MODELVIEW);   
+    glLoadIdentity();
+
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
     for (int i=nbFrames-1 ; i>=0 ; i--) {
@@ -2298,6 +2264,12 @@ status_t SurfaceFlinger::electronBeamOnAnimationImplLocked()
         // draw the blue plane
         vverts(vtx, vb);
         glColorMask(0,0,1,1);
+        glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+
+        // draw the white highlight (we use the last vertices)   
+        glDisable(GL_TEXTURE_2D);   
+        glColorMask(1,1,1,1);   
+        glColor4f(vg, vg, vg, 1);   
         glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 
         hw.flip(screenBounds);
@@ -2843,9 +2815,6 @@ void GraphicPlane::setDisplayHardware(DisplayHardware *hw)
         case 90:
             displayOrientation = ISurfaceComposer::eOrientation90;
             break;
-        case 180:
-            displayOrientation = ISurfaceComposer::eOrientation180;
-            break;
         case 270:
             displayOrientation = ISurfaceComposer::eOrientation270;
             break;
@@ -2902,9 +2871,6 @@ status_t GraphicPlane::setOrientation(int orientation)
     mWidth = int(w);
     mHeight = int(h);
 
-#ifdef USE_LGE_HDMI
-    NvDispMgrAutoOrientation(orientation);
-#endif
     Transform orientationTransform;
     GraphicPlane::orientationToTransfrom(orientation, w, h,
             &orientationTransform);

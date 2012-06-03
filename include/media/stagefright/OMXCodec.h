@@ -173,7 +173,7 @@ private:
         void *mData;
         MediaBuffer *mMediaBuffer;
         OMX_U8 *mAllocatedBuffer;
-        size_t mAllocatedSize;
+        OMX_U32 mAllocatedSize;
     };
 
     struct CodecSpecificData {
@@ -385,7 +385,17 @@ private:
     int32_t mInterlaceFrame;
 
     int32_t mNumBFrames;
+
     bool mUseArbitraryMode;
+
+    typedef enum {
+        BUFFER_WITH_CLIENT = 0x1,
+        FILLED_BUFFERS_PRESENT = 0x2,
+    } DeferReason;
+
+    int32_t mDeferReason;
+
+    size_t countOutputBuffers(BufferStatus);
 };
 
 struct CodecCapabilities {

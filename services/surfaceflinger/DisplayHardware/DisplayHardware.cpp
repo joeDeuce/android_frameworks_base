@@ -177,8 +177,9 @@ void DisplayHardware::init(uint32_t dpy)
         } else {
             // We have hardware composition enabled. Check the composition type
             if (property_get("debug.composition.type", property, NULL) > 0) {
-                if((strncmp(property, "c2d", 3)) == 0)
-                    mFlags |=  C2D_COMPOSITION;
+                if ((strncmp(property, "c2d", 3) == 0) ||
+                    (strncmp(property, "dyn", 3) == 0))
+                    mFlags |= C2D_COMPOSITION;
                 else if ((strncmp(property, "mdp", 3)) == 0)
                     mFlags |= MDP_COMPOSITION;
             }
@@ -194,12 +195,8 @@ void DisplayHardware::init(uint32_t dpy)
     eglGetConfigs(display, NULL, 0, &numConfigs);
 
     EGLConfig config = NULL;
-#ifdef FORCE_EGL_CONFIG
-    config = (EGLConfig)FORCE_EGL_CONFIG;
-#else
     err = selectConfigForPixelFormat(display, attribs, format, &config);
     LOGE_IF(err, "couldn't find an EGLConfig matching the screen format");
-#endif
     
     EGLint r,g,b,a;
     eglGetConfigAttrib(display, config, EGL_RED_SIZE,   &r);
@@ -250,12 +247,6 @@ void DisplayHardware::init(uint32_t dpy)
         mDpiX = mDpiY = atoi(property);
     }
     mDensity = atoi(property) * (1.0f/160.0f);
-	if (property_get("persist.sys.force.tablet", property, NULL) > 0) {
-	    if (strcmp(property, "true") == 0) {
-			strcpy(property, "160");
-			mDensity = atoi(property) * (1.0f/160.0f);
-	    }
-	}
 
 
     /*
@@ -303,22 +294,6 @@ void DisplayHardware::init(uint32_t dpy)
 
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &mMaxTextureSize);
     glGetIntegerv(GL_MAX_VIEWPORT_DIMS, mMaxViewportDims);
-
-
-#ifdef EGL_ANDROID_swap_rectangle
-    if (extensions.hasExtension("EGL_ANDROID_swap_rectangle")) {
-        if (eglSetSwapRectangleANDROID(display, surface,
-                0, 0, mWidth, mHeight) == EGL_TRUE) {
-            // This could fail if this extension is not supported by this
-            // specific surface (of config)
-            mFlags |= SWAP_RECTANGLE;
-        }
-    }
-    // when we have the choice between PARTIAL_UPDATES and SWAP_RECTANGLE
-    // choose PARTIAL_UPDATES, which should be more efficient
-    if (mFlags & PARTIAL_UPDATES)
-        mFlags &= ~SWAP_RECTANGLE;
-#endif
 
     LOGI("EGL informations:");
     LOGI("# of configs : %d", numConfigs);

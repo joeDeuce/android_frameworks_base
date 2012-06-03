@@ -39,6 +39,9 @@
 #include <media/stagefright/foundation/hexdump.h>
 #include <media/stagefright/foundation/ADebug.h>
 #include <media/stagefright/AudioPlayer.h>
+#ifdef WITH_QCOM_LPA
+#include <media/stagefright/LPAPlayer.h>
+#endif
 #include <media/stagefright/DataSource.h>
 #include <media/stagefright/FileSource.h>
 #include <media/stagefright/MediaBuffer.h>
@@ -53,9 +56,13 @@
 #include <gui/SurfaceTextureClient.h>
 #include <surfaceflinger/ISurfaceComposer.h>
 
+#include <cutils/properties.h>
+
+#include <media/stagefright/foundation/ALooper.h>
 #include <media/stagefright/foundation/AMessage.h>
 
 #include <cutils/properties.h>
+#include <gralloc_priv.h>
 
 #define USE_SURFACE_ALLOC 1
 #define FRAME_DROP_FREQ 0
@@ -235,6 +242,8 @@ AwesomePlayer::AwesomePlayer()
         mStats.mLastFrameUs = 0;
         mStats.mStatisticsFrames = 0;
         mStats.mFPSSumUs = 0;
+        mStats.mTotalTime = 0;
+        mStats.mFirstFrameTime = 0;
     }
     reset();
 }
@@ -248,6 +257,7 @@ AwesomePlayer::~AwesomePlayer() {
         Mutex::Autolock autoLock(mStatsLock);
         LOGW("=========================================================");
         LOGW("Average Frames Per Second: %.4f", mStats.mFPSSumUs/((double)mStats.mStatisticsFrames));
+        LOGW("Total Frames / Total Time: %.4f", ((double)(mStats.mTotalFrames-1)*1E6)/((double)mStats.mTotalTime));
         LOGW("========================================================");
     }
 
@@ -926,7 +936,52 @@ status_t AwesomePlayer::play_l() {
     if (mAudioSource != NULL) {
         if (mAudioPlayer == NULL) {
             if (mAudioSink != NULL) {
+#ifndef WITH_QCOM_LPA
                 mAudioPlayer = new AudioPlayer(mAudioSink, this);
+#else
+                sp<MetaData> format = mAudioTrack->getFormat();
+                const char *mime;
+                bool success = format->findCString(kKeyMIMEType, &mime);
+                CHECK(success);
+
+                int64_t durationUs;
+                success = format->findInt64(kKeyDuration, &durationUs);
+                /*
+                 * Some clips may not have kKeyDuration set, especially so for clips in a MP3
+                 * container with the Frames field absent in the Xing header.
+                 */
+                if (!success)
+                    durationUs = 0;
+
+                LOGV("LPAPlayer::getObjectsAlive() %d",LPAPlayer::objectsAlive);
+                int32_t isFormatAdif = 0;
+                format->findInt32(kkeyAacFormatAdif, &isFormatAdif);
+
+                char lpaDecode[128];
+                property_get("lpa.decode",lpaDecode,"0");
+                if(strcmp("true",lpaDecode) == 0)
+                {
+                    LOGV("LPAPlayer::getObjectsAlive() %d",LPAPlayer::objectsAlive);
+                    int streamType = mAudioSink->getAudioStreamType();
+                    if ( durationUs > 60000000 && !isFormatAdif
+                         && (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_MPEG) || !strcasecmp(mime,MEDIA_MIMETYPE_AUDIO_AAC))
+                         && LPAPlayer::objectsAlive == 0 && mVideoSource == NULL && streamType == AUDIO_STREAM_MUSIC) {
+                        LOGE("LPAPlayer created, LPA MODE detected mime %s duration %lld AudioStream %d", mime, durationUs,streamType);
+                        bool initCheck =  false;
+                        mAudioPlayer = new LPAPlayer(mAudioSink, initCheck, this);
+                        if(!initCheck) {
+                            delete mAudioPlayer;
+                            mAudioPlayer = NULL;
+                        }
+                    }
+                }
+                if(mAudioPlayer == NULL) {
+                    LOGE("AudioPlayer created, Non-LPA mode mime %s duration %d\n", mime, durationUs);
+                    mAudioPlayer = new AudioPlayer(mAudioSink, this);
+                }
+
+                LOGV("Setting Audio source");
+#endif
                 mAudioPlayer->setSource(mAudioSource);
 
                 mTimeSource = mAudioPlayer;
@@ -1335,6 +1390,7 @@ status_t AwesomePlayer::seekTo(int64_t timeUs) {
         return seekTo_l(timeUs);
     } else {
         notifyListener_l(MEDIA_SEEK_COMPLETE);
+        notifyListener_l(MEDIA_INFO, MEDIA_INFO_BUFFERING_END);
         mSeekNotificationSent = true;
     }
     return OK;
@@ -1455,10 +1511,42 @@ status_t AwesomePlayer::initAudioDecoder() {
     if (!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_RAW)) {
         mAudioSource = mAudioTrack;
     } else {
+#ifdef WITH_QCOM_LPA
+        // For LPA Playback use the decoder without OMX layer
+        char lpaDecode[128];
+        char *matchComponentName = NULL;
+        property_get("lpa.decode",lpaDecode,"0");
+        if(strcmp("true",lpaDecode) == 0 && mVideoSource == NULL) {
+            const char *mime;
+            bool success = meta->findCString(kKeyMIMEType, &mime);
+            CHECK(success);
+            int64_t durationUs;
+            success = meta->findInt64(kKeyDuration, &durationUs);
+            if (!success) durationUs = 0;
+            int32_t isFormatAdif = 0;
+            meta->findInt32(kkeyAacFormatAdif, &isFormatAdif);
+
+            if ( (durationUs > 60000000) && !isFormatAdif && LPAPlayer::objectsAlive == 0) {
+                if(!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_MPEG)) {
+                    LOGV("matchComponentName is set to MP3Decoder");
+                    matchComponentName= "MP3Decoder";
+                }
+                if(!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_AAC)) {
+                    LOGV("matchComponentName is set to AACDecoder");
+                    matchComponentName= "AACDecoder";
+                }
+            }
+        }
+#endif
         mAudioSource = OMXCodec::Create(
                 mClient.interface(), mAudioTrack->getFormat(),
                 false, // createEncoder
+#ifndef WITH_QCOM_LPA
                 mAudioTrack);
+#else
+                mAudioTrack,
+                matchComponentName);
+#endif
     }
 
     if (mAudioSource != NULL) {
@@ -1665,6 +1753,29 @@ void AwesomePlayer::onVideoEvent() {
     }
     mVideoEventPending = false;
 
+    if (mStatistics) {
+        Mutex::Autolock autoLock(mStatsLock);
+        if(mStats.mTotalFrames < 2){
+           mStats.mLastFrameUs = getTimeOfDayUs();
+           mStats.mFirstFrameTime = getTimeOfDayUs();
+        }
+        mStats.mTotalTime = getTimeOfDayUs() - mStats.mFirstFrameTime;
+        int64_t now = getTimeOfDayUs();
+        int64_t diff = now - mStats.mLastFrameUs;
+        if (diff > 250000 && !mStats.mVeryFirstFrame) {
+             double fps =((mStats.mTotalFrames - mStats.mLastFrame) * 1E6)/diff;
+             if (mStats.mStatisticsFrames == 0) {
+                 fps =((mStats.mTotalFrames - mStats.mLastFrame - 1) * 1E6)/diff;
+             }
+             LOGW("Frames per second: %.4f, Duration of measurement: %lld", fps,diff);
+             mStats.mFPSSumUs += fps;
+             ++mStats.mStatisticsFrames;
+             mStats.mLastFrameUs = now;
+             mStats.mLastFrame = mStats.mTotalFrames;
+         }
+    }
+
+
     if (mSeeking != NO_SEEK) {
         if (mVideoBuffer) {
             mVideoBuffer->release();
@@ -1761,6 +1872,11 @@ void AwesomePlayer::onVideoEvent() {
         }
     }
 
+    if (mFlags & NOTIFY_ATTRIBUTES) {
+        modifyFlags(NOTIFY_ATTRIBUTES, CLEAR);
+        notifyVideoAttributes_l();
+    }
+
     int64_t timeUs;
     CHECK(mVideoBuffer->meta_data()->findInt64(kKeyTime, &timeUs));
 
@@ -1810,8 +1926,11 @@ void AwesomePlayer::onVideoEvent() {
         if(mStatistics)
         {
             Mutex::Autolock autoLock(mStatsLock);
-            if(mStats.mVeryFirstFrame)
+            if(mStats.mVeryFirstFrame){
                 logFirstFrame();
+                LOGW("setting first frame time");
+                mStats.mLastFrameUs = getTimeOfDayUs();
+            }
         }
     }
 
@@ -1918,18 +2037,6 @@ void AwesomePlayer::onVideoEvent() {
             logOnTime(timeUs,nowUs,latenessUs);
             mStats.mTotalFrames++;
             mStats.mConsecutiveFramesDropped = 0;
-
-            int64_t now = getTimeOfDayUs(),
-            diff = now - mStats.mLastFrameUs;
-            if (diff > 250000) {
-                float fps =((mStats.mTotalFrames - mStats.mLastFrame) * 1E6)/diff;
-                LOGW("Frames per second: %.4f", fps);
-
-                mStats.mFPSSumUs += fps;
-                mStats.mLastFrameUs = now;
-                mStats.mLastFrame = mStats.mTotalFrames;
-                ++mStats.mStatisticsFrames;
-            }
         }
     }
 
@@ -2345,7 +2452,7 @@ void AwesomePlayer::onPrepareAsyncEvent() {
             int64_t bitrate = 0;
             if( getBitrate( &bitrate ) ) {
                 //considering that Audio Video can be apart by 0.3 secs
-                mCachedSource->setAVInterleavingOffset( bitrate/3 );
+                mCachedSource->setAVInterleavingOffset( bitrate/(3 * 8) );
             }
         }
         postBufferingEvent_l();
@@ -2368,6 +2475,7 @@ void AwesomePlayer::finishAsyncPrepare_l() {
     mPrepareResult = OK;
     modifyFlags((PREPARING|PREPARE_CANCELLED|PREPARING_CONNECTED), CLEAR);
     modifyFlags(PREPARED, SET);
+    modifyFlags(NOTIFY_ATTRIBUTES, SET);
     mAsyncPrepareEvent = NULL;
     mPreparedCondition.broadcast();
 }
@@ -2405,6 +2513,23 @@ status_t AwesomePlayer::setParameter(int key, const Parcel &request) {
         case KEY_PARAMETER_CACHE_STAT_COLLECT_FREQ_MS:
         {
             return setCacheStatCollectFreq(request);
+        }
+        case KEY_PARAMETER_3D_ATTRIBUTES:
+        {
+            int32_t format3D = 0;
+            sp<MetaData> meta = mVideoSource->getFormat();
+
+            request.readInt32(&format3D);
+
+            //Validate it, but client really shouldn't be messing with this
+            CHECK(!(format3D & ~(HAL_3D_OUT_SIDE_BY_SIDE |
+                                 HAL_3D_OUT_TOP_BOTTOM   |
+                                 HAL_3D_IN_SIDE_BY_SIDE_R_L |
+                                 HAL_3D_IN_SIDE_BY_SIDE_L_R |
+                                 HAL_3D_IN_TOP_BOTTOM)));
+
+            meta->setInt32(kKey3D, format3D);
+            return OK;
         }
         default:
         {
@@ -2525,7 +2650,7 @@ void AwesomePlayer::logStatistics() {
     if (mFlags & LOOPING) {LOGW("Looping Update");}
     LOGW("Mime Type: %s",mime);
     LOGW("Number of frames dropped: %lld",mStats.mNumVideoFramesDropped);
-    LOGW("Number of frames rendered: %u",mStats.mTotalFrames);
+    LOGW("Number of frames rendered: %llu",mStats.mTotalFrames);
     LOGW("=====================================================");
 }
 
@@ -2598,5 +2723,16 @@ inline int64_t AwesomePlayer::getTimeOfDayUs() {
 
     return (int64_t)tv.tv_sec * 1000000 + tv.tv_usec;
 }
-}  // namespace android
 
+void AwesomePlayer::notifyVideoAttributes_l() {
+    sp<MetaData> meta = mVideoSource->getFormat();
+    int format3D = 0;
+
+    if (!meta->findInt32(kKey3D, &format3D))
+        format3D = 0;
+
+    notifyListener_l(MEDIA_INFO,
+                     KEY_PARAMETER_3D_ATTRIBUTES, format3D);
+}
+
+}  // namespace android

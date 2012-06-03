@@ -259,7 +259,7 @@ public class PowerManagerService extends IPowerManager.Stub
     boolean mUnplugTurnsOnScreen;
     private int mWarningSpewThrottleCount;
     private long mWarningSpewThrottleTime;
-    private int mAnimationSetting = ANIM_SETTING_OFF;
+    private int mAnimationSetting = ANIM_SETTING_OFF | ANIM_SETTING_ON;
     private boolean mAnimateCrtOff = false;
     private boolean mAnimateCrtOn = false;
     // When using software auto-brightness, determines whether (true) button
@@ -316,6 +316,7 @@ public class PowerManagerService extends IPowerManager.Stub
     private native void nativeInit();
     private native void nativeSetPowerState(boolean screenOn, boolean screenBright);
     private native void nativeStartSurfaceFlingerAnimation(int mode);
+    private native void nativeStartSurfaceFlingerAnimationOn(int mode);
 
     /*
     static PrintStream mLog;
@@ -531,7 +532,7 @@ public class PowerManagerService extends IPowerManager.Stub
                 // }
                 // if (transitionScale > 0.5f) {
                 // Uncomment this if you want the screen-on animation.
-                // mAnimationSetting |= ANIM_SETTING_ON;
+                mAnimationSetting |= ANIM_SETTING_ON;
                 // }
             }
         }
@@ -869,7 +870,7 @@ public class PowerManagerService extends IPowerManager.Stub
             switch (wl.flags & LOCK_MASK)
             {
                 case PowerManager.FULL_WAKE_LOCK:
-                    if (mAutoBrightnessButtonKeyboard) {
+                    if (mAutoBrightessEnabled) {
                         wl.minState = SCREEN_BRIGHT;
                     } else {
                         wl.minState = (mKeyboardVisible ? ALL_BRIGHT : SCREEN_BUTTON_BRIGHT);
@@ -1828,7 +1829,7 @@ public class PowerManagerService extends IPowerManager.Stub
                 return;
             }
 
-            if (!mBootCompleted && !mAutoBrightnessButtonKeyboard) {
+            if (!mBootCompleted && !mUseSoftwareAutoBrightness) {
                 newState |= ALL_BRIGHT;
             }
 
@@ -2301,10 +2302,20 @@ public class PowerManagerService extends IPowerManager.Stub
             }
         }
 
+void jumpToTarget() {   
+             if (mSpew) Slog.d(TAG, "jumpToTarget targetValue=" + targetValue + ": " + mask);   
+             setLightBrightness(mask, targetValue);   
+             final int tv = targetValue;   
+             curValue = tv;   
+             targetValue = -1;   
+         } 
+
         public void run() {
             synchronized (mLocks) {
                 // we're turning off
                 final boolean turningOff = animating && targetValue == Power.BRIGHTNESS_OFF;
+                final boolean turningOn = animating && curValue == Power.BRIGHTNESS_OFF;
+
                 final boolean crtAnimate = animating &&
                         ((mAnimateCrtOff && targetValue == Power.BRIGHTNESS_OFF) ||
                         (mAnimateCrtOn && (int) curValue == Power.BRIGHTNESS_OFF));
@@ -2318,8 +2329,14 @@ public class PowerManagerService extends IPowerManager.Stub
                 } else {
                         // It's pretty scary to hold mLocks for this long, and we should
                         // redesign this, but it works for now.
-                        nativeStartSurfaceFlingerAnimation(mScreenOffReason == WindowManagerPolicy.OFF_BECAUSE_OF_PROX_SENSOR
+			if (turningOff) {
+	                        nativeStartSurfaceFlingerAnimation(mScreenOffReason == WindowManagerPolicy.OFF_BECAUSE_OF_PROX_SENSOR
                                 ? 0 : mAnimationSetting);
+			} else if (turningOn) {   
+                 		jumpToTarget();   
+                 		nativeStartSurfaceFlingerAnimationOn(mAnimationSetting);   
+                 		animating = false;   
+                 	} 
                         mScreenBrightness.jumpToTargetLocked(); 
                 }
             }
@@ -2351,7 +2368,10 @@ public class PowerManagerService extends IPowerManager.Stub
         }
         if (mButtonBrightnessOverride >= 0) {
             brightness = mButtonBrightnessOverride;
-        } else if (mLightSensorButtonBrightness >= 0 && mAutoBrightnessButtonKeyboard) {
+        } else if (!mAutoBrightessEnabled) {
+            // Light sensor is not on, mLightSensorButtonBrightness has not been cleared
+            brightness = getPreferredBrightness();
+        } else if (mLightSensorButtonBrightness >= 0 && mUseSoftwareAutoBrightness) {
             brightness = mLightSensorButtonBrightness;
         }
         if (brightness > 0) {
@@ -2373,7 +2393,10 @@ public class PowerManagerService extends IPowerManager.Stub
             brightness = 0;
         } else if (mButtonBrightnessOverride >= 0) {
             brightness = mButtonBrightnessOverride;
-        } else if (mLightSensorKeyboardBrightness >= 0 && mAutoBrightnessButtonKeyboard) {
+        } else if (!mAutoBrightessEnabled && mKeyboardVisible) {
+            // Light sensor is not on, mLightSensorButtonBrightness has not been cleared
+            brightness = getPreferredBrightness();
+        } else if (mLightSensorKeyboardBrightness >= 0 && mUseSoftwareAutoBrightness) {
             brightness =  mLightSensorKeyboardBrightness;
         }
         if (brightness > 0) {
@@ -2496,11 +2519,9 @@ public class PowerManagerService extends IPowerManager.Stub
             if (mLastEventTime <= time || force) {
                 mLastEventTime = time;
                 if ((mUserActivityAllowed && !mProximitySensorActive) || force) {
-					if (!mAutoBrightnessButtonKeyboard) {
-						// Turn on button (and keyboard) backlights on any event, so that they
-						// don't suddenly disappear when the lock screen is unlocked (OTHER_EVENT),
-						// and so capacitive buttons can be found on devices where they lack
-						// identifying surface features.
+                    // Only turn on button backlights if a button was pressed
+                    // and auto brightness is disabled
+                    if (eventType == BUTTON_EVENT && !mAutoBrightessEnabled) {
                         mUserState = (mKeyboardVisible ? ALL_BRIGHT : SCREEN_BUTTON_BRIGHT);
                     } else {
                         // don't clear button/keyboard backlights when the screen is touched.
@@ -2752,12 +2773,7 @@ public class PowerManagerService extends IPowerManager.Stub
         if (mLightSensorValue != value) {
             mLightSensorValue = value;
             if ((mPowerState & BATTERY_LOW_BIT) == 0) {
-                // use maximum light sensor value seen since screen went on for LCD to avoid flicker
-                // we only do this if we are docked, since lighting should be stable when
-                // stationary in a dock.
-                int lcdValue = getAutoBrightnessValue(
-                        (!mIsDocked ? value : mHighestLightSensorValue),
-                        mLastLcdValue,
+                int lcdValue = getAutoBrightnessValue(value, mLastLcdValue,
                         (mCustomLightEnabled ? mCustomLightLevels : mAutoBrightnessLevels),
                         (mCustomLightEnabled ? mCustomLcdValues : mLcdBacklightValues));
 
@@ -2935,6 +2951,7 @@ public class PowerManagerService extends IPowerManager.Stub
                 // will take care of turning on due to a true change to the lid
                 // switch and synchronized with the lock screen.
                 if ((mPowerState & SCREEN_ON_BIT) != 0) {
+                    if (mSpew) Slog.w(TAG, "mKeyboardVisible:" + mKeyboardVisible + " mAutoBrightessEnabled: " + mAutoBrightessEnabled + " mUseSoftwareAutoBrightness:" + mUseSoftwareAutoBrightness + " mLightSensorValue:" + mLightSensorValue);
                     if (mUseSoftwareAutoBrightness) {
                         // force recompute of backlight values
                         if (mLightSensorValue >= 0) {
@@ -2942,9 +2959,16 @@ public class PowerManagerService extends IPowerManager.Stub
                             mLightSensorValue = -1;
                             lightSensorChangedLocked(value);
                             lightFilterReset((int)mLightSensorValue);
+                        } else {
+                            // LightSensor is not on
+                            updateLightsLocked(mPowerState, LIGHTS_MASK);
                         }
                     }
                     userActivity(SystemClock.uptimeMillis(), false, BUTTON_EVENT, true);
+                }
+                else if (!visible) {
+                    if (mSpew) Slog.w(TAG, "keyboard not visible, turning off");
+                    mKeyboardLight.turnOff();
                 }
             }
         }
@@ -3269,7 +3293,7 @@ public class PowerManagerService extends IPowerManager.Stub
         // wait until sensors are enabled before turning on screen.
         // some devices will not activate the light sensor properly on boot
         // unless we do this.
-        if (mAutoBrightnessButtonKeyboard) {
+        if (mAutoBrightessEnabled) {
             // turn the screen on
             setPowerState(SCREEN_BRIGHT);
         } else {
