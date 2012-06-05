@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2009 The Android Open Source Project
- * Copyright (C) 2010-2011 Code Aurora Forum
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,8 +44,6 @@ namespace android {
 
 static const int64_t kMax32BitFileSize = 0x007fffffffLL;
 static const int64_t kMax64BitFileSize = 0x00ffffffffLL; //fat32 max size limited to 4GB
-
-static const uint8_t kNalUnitTypeSeqEnhanceInfo = 0x06;
 static const uint8_t kNalUnitTypeSeqParamSet = 0x07;
 static const uint8_t kNalUnitTypePicParamSet = 0x08;
 static const int64_t kInitialDelayTimeUs     = 700000LL;
@@ -77,7 +74,6 @@ public:
     status_t dump(int fd, const Vector<String16>& args) const;
 
 private:
-    friend class MPEG4Writer;
     MPEG4Writer *mOwner;
     sp<MetaData> mMeta;
     sp<MediaSource> mSource;
@@ -152,24 +148,15 @@ private:
     List<CttsTableEntry> mCttsTableEntries;
 
     // Sequence parameter set or picture parameter set
-    struct AVCParamSet : public RefBase{
+    struct AVCParamSet {
         AVCParamSet(uint16_t length, const uint8_t *data)
-            : mLength(length), mData((uint8_t *)malloc(length)) {
-            CHECK(mData);
-            memcpy(const_cast<uint8_t *>(mData), data, length);
-        }
+            : mLength(length), mData(data) {}
 
-        ~AVCParamSet() {
-            if (mData) free(const_cast<uint8_t *>(mData));
-
-        }
         uint16_t mLength;
         const uint8_t *mData;
     };
-    List< sp<AVCParamSet> > mSeqParamSets;
-    List< sp<AVCParamSet> > mPicParamSets;
-    sp<AVCParamSet> mSeqEnhanceInfo;
-
+    List<AVCParamSet> mSeqParamSets;
+    List<AVCParamSet> mPicParamSets;
     uint8_t mProfileIdc;
     uint8_t mProfileCompatible;
     uint8_t mLevelIdc;
@@ -859,6 +846,7 @@ off64_t MPEG4Writer::addLengthPrefixedSample_l(MediaBuffer *buffer) {
     off64_t old_offset = mOffset;
 
     size_t length = buffer->range_length();
+
     if (mUse4ByteNalLength) {
         uint8_t x = length >> 24;
         ::write(mFd, &x, 1);
@@ -1141,8 +1129,7 @@ MPEG4Writer::Track::Track(
       mCodecSpecificDataSize(0),
       mGotAllCodecSpecificData(false),
       mReachedEOS(false),
-      mRotation(0),
-      mSeqEnhanceInfo(NULL) {
+      mRotation(0) {
     getCodecSpecificDataFromInputFormatIfPossible();
 
     const char *mime;
@@ -1330,20 +1317,12 @@ void MPEG4Writer::writeChunkToFile(Chunk* chunk) {
     while (!chunk->mSamples.empty()) {
         List<MediaBuffer *>::iterator it = chunk->mSamples.begin();
 
-        sp<Track::AVCParamSet> seqEnhanceInfo = chunk->mTrack->mSeqEnhanceInfo;
-        off64_t chunk_offset = mOffset;
-
-        if (chunk->mTrack->isAvc() && seqEnhanceInfo != NULL) {
-            MediaBuffer *temp = new MediaBuffer(const_cast<uint8_t *>(seqEnhanceInfo->mData), seqEnhanceInfo->mLength);
-            addLengthPrefixedSample_l(temp);
-            temp->release();
-        }
-
-        chunk->mTrack->isAvc() ? addLengthPrefixedSample_l(*it)
-                              : addSample_l(*it);
+        off64_t offset = chunk->mTrack->isAvc()
+                                ? addLengthPrefixedSample_l(*it)
+                                : addSample_l(*it);
 
         if (isFirstSample) {
-            chunk->mTrack->addChunkOffset(chunk_offset);
+            chunk->mTrack->addChunkOffset(offset);
             isFirstSample = false;
         }
 
@@ -1619,8 +1598,7 @@ const uint8_t *MPEG4Writer::Track::parseParamSet(
 
     LOGV("parseParamSet");
     CHECK(type == kNalUnitTypeSeqParamSet ||
-          type == kNalUnitTypePicParamSet ||
-          type == kNalUnitTypeSeqEnhanceInfo);
+          type == kNalUnitTypePicParamSet);
 
     const uint8_t *nextStartCode = findNextStartCode(data, length);
     *paramSetLen = nextStartCode - data;
@@ -1629,7 +1607,7 @@ const uint8_t *MPEG4Writer::Track::parseParamSet(
         return NULL;
     }
 
-    sp<AVCParamSet> paramSet = new AVCParamSet(*paramSetLen, data);
+    AVCParamSet paramSet(*paramSetLen, data);
     if (type == kNalUnitTypeSeqParamSet) {
         if (*paramSetLen < 4) {
             LOGE("Seq parameter set malformed");
@@ -1648,14 +1626,9 @@ const uint8_t *MPEG4Writer::Track::parseParamSet(
             }
         }
         mSeqParamSets.push_back(paramSet);
-    } else if (type == kNalUnitTypePicParamSet) {
-        mPicParamSets.push_back(paramSet);
-    } else if (type == kNalUnitTypeSeqEnhanceInfo) {
-        mSeqEnhanceInfo = paramSet;
     } else {
-        CHECK(!"Unrecognized NAL type");
+        mPicParamSets.push_back(paramSet);
     }
-
     return nextStartCode;
 }
 
@@ -1711,13 +1684,6 @@ status_t MPEG4Writer::Track::parseAVCCodecSpecificData(
                 gotPps = true;
             }
             nextStartCode = parseParamSet(tmp + 4, bytesLeft - 4, type, &paramSetLen);
-        } else if (type == kNalUnitTypeSeqEnhanceInfo) {
-            if (!gotSps || !gotPps)
-            {
-                 LOGE("SEI must come after PPS and SPS");
-                 return ERROR_MALFORMED;
-            }
-            nextStartCode = parseParamSet(tmp + 4, bytesLeft - 4, type, &paramSetLen);
         } else {
             LOGE("Only SPS and PPS Nal units are expected");
             return ERROR_MALFORMED;
@@ -1730,8 +1696,7 @@ status_t MPEG4Writer::Track::parseAVCCodecSpecificData(
         // Move on to find the next parameter set
         bytesLeft -= nextStartCode - tmp;
         tmp = nextStartCode;
-        if (type != kNalUnitTypeSeqEnhanceInfo) //SEI info isn't going into AVCC so let's not increment
-            mCodecSpecificDataSize += (2 + paramSetLen);
+        mCodecSpecificDataSize += (2 + paramSetLen);
     }
 
     {
@@ -1802,8 +1767,6 @@ status_t MPEG4Writer::Track::makeAVCCodecSpecificData(
     // ISO 14496-15: AVC file format
     mCodecSpecificDataSize += 7;  // 7 more bytes in the header
     mCodecSpecificData = malloc(mCodecSpecificDataSize);
-    CHECK(mCodecSpecificData != NULL);
-
     uint8_t *header = (uint8_t *)mCodecSpecificData;
     header[0] = 1;                     // version
     header[1] = mProfileIdc;           // profile indication
@@ -1821,15 +1784,15 @@ status_t MPEG4Writer::Track::makeAVCCodecSpecificData(
     int nSequenceParamSets = mSeqParamSets.size();
     header[5] = 0xe0 | nSequenceParamSets;
     header += 6;
-    for (List< sp<AVCParamSet> >::iterator it = mSeqParamSets.begin();
+    for (List<AVCParamSet>::iterator it = mSeqParamSets.begin();
          it != mSeqParamSets.end(); ++it) {
         // 16-bit sequence parameter set length
-        uint16_t seqParamSetLength = (*it)->mLength;
+        uint16_t seqParamSetLength = it->mLength;
         header[0] = seqParamSetLength >> 8;
         header[1] = seqParamSetLength & 0xff;
 
         // SPS NAL unit (sequence parameter length bytes)
-        memcpy(&header[2], (*it)->mData, seqParamSetLength);
+        memcpy(&header[2], it->mData, seqParamSetLength);
         header += (2 + seqParamSetLength);
     }
 
@@ -1837,15 +1800,15 @@ status_t MPEG4Writer::Track::makeAVCCodecSpecificData(
     int nPictureParamSets = mPicParamSets.size();
     header[0] = nPictureParamSets;
     header += 1;
-    for (List< sp<AVCParamSet> >::iterator it = mPicParamSets.begin();
+    for (List<AVCParamSet>::iterator it = mPicParamSets.begin();
          it != mPicParamSets.end(); ++it) {
         // 16-bit picture parameter set length
-        uint16_t picParamSetLength = (*it)->mLength;
+        uint16_t picParamSetLength = it->mLength;
         header[0] = picParamSetLength >> 8;
         header[1] = picParamSetLength & 0xff;
 
         // PPS Nal unit (picture parameter set length bytes)
-        memcpy(&header[2], (*it)->mData, picParamSetLength);
+        memcpy(&header[2], it->mData, picParamSetLength);
         header += (2 + picParamSetLength);
     }
 
@@ -1974,10 +1937,6 @@ status_t MPEG4Writer::Track::threadEntry() {
         if (mIsAvc) StripStartcode(copy);
 
         size_t sampleSize = copy->range_length();
-
-        if (mSeqEnhanceInfo != NULL)
-            sampleSize += mSeqEnhanceInfo->mLength + 4 /*Nal start code len*/;
-
         if (mIsAvc) {
             if (mOwner->useNalLengthFour()) {
                 sampleSize += 4;
@@ -2145,18 +2104,10 @@ status_t MPEG4Writer::Track::threadEntry() {
             }
             trackProgressStatus(timestampUs);
         }
-        if (!hasMultipleTracks && mIsAudio) {
-            off64_t offset = mOwner->mOffset;
-            if (mIsAvc && mSeqEnhanceInfo != NULL)
-            {
-                MediaBuffer *temp = new MediaBuffer(const_cast<uint8_t *>(mSeqEnhanceInfo->mData), mSeqEnhanceInfo->mLength);
-                mOwner->addLengthPrefixedSample_l(temp);
-                temp->release();
-            }
 
-            mIsAvc ? mOwner->addLengthPrefixedSample_l(copy)
-                    : mOwner->addSample_l(copy);
-
+        if (!hasMultipleTracks) {
+            off64_t offset = mIsAvc? mOwner->addLengthPrefixedSample_l(copy)
+                                 : mOwner->addSample_l(copy);
             if (mChunkOffsets.empty()) {
                 addChunkOffset(offset);
             }

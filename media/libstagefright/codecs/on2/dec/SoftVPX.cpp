@@ -29,8 +29,6 @@
 
 namespace android {
 
-const static size_t kInputBufferSize = 3 * 256 * 1024;
-
 template<class T>
 static void InitOMXParams(T *params) {
     params->nSize = sizeof(T);
@@ -68,7 +66,7 @@ void SoftVPX::initPorts() {
     def.eDir = OMX_DirInput;
     def.nBufferCountMin = kNumBuffers;
     def.nBufferCountActual = def.nBufferCountMin;
-    def.nBufferSize = kInputBufferSize;
+    def.nBufferSize = 256 * 1024;
     def.bEnabled = OMX_TRUE;
     def.bPopulated = OMX_FALSE;
     def.eDomain = OMX_PortDomainVideo;
