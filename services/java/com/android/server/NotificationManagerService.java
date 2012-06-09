@@ -418,6 +418,8 @@ public class NotificationManagerService extends INotificationManager.Stub
                     Settings.System.NOTIFICATION_LIGHT_COLOR), false, this);
             resolver.registerContentObserver(Settings.System.getUriFor(
                     Settings.System.NOTIFICATION_USE_BUTTON_BACKLIGHT), false, this);
+            resolver.registerContentObserver(Settings.System.getUriFor(  
+                    Settings.System.MUTE_ANNOYING_NOTIFICATIONS_THRESHOLD), false, this);  
             update();
         }
 
@@ -452,8 +454,9 @@ public class NotificationManagerService extends INotificationManager.Stub
             mDefaultNotificationLedOn = Settings.System
                     .getInt(mContext.getContentResolver(),
                             Settings.System.NOTIFICATION_LIGHT_ON,
-                            resources
-                                    .getInteger(com.android.internal.R.integer.config_defaultNotificationLedOn));
+                            resources.getInteger(com.android.internal.R.integer.config_defaultNotificationLedOn));
+            mAnnoyingNotificationThreshold = Settings.System.getLong(resolver,
+                            Settings.System.MUTE_ANNOYING_NOTIFICATIONS_THRESHOLD, 0);  
 
         }
     }
