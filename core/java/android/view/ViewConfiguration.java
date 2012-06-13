@@ -25,7 +25,6 @@ import android.os.SystemProperties;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.SparseArray;
-import android.provider.Settings;
 
 /**
  * Contains methods to standard constants used in the UI for timeouts, sizes, and distances.
@@ -214,7 +213,7 @@ public class ViewConfiguration {
     /**
      * The coefficient of friction applied to flings/scrolls.
      */
-    private static float SCROLL_FRICTION;
+    private static final float SCROLL_FRICTION = 0.015f;
 
     /**
      * Max distance to overscroll for edge effects
@@ -280,7 +279,6 @@ public class ViewConfiguration {
      * @see android.util.DisplayMetrics
      */
     private ViewConfiguration(Context context) {
-        SCROLL_FRICTION = Settings.System.getFloat(context.getContentResolver(), Settings.System.SCROLL_FRICTION, 0.015f);
         final Resources res = context.getResources();
         final DisplayMetrics metrics = res.getDisplayMetrics();
         final Configuration config = res.getConfiguration();

@@ -2869,13 +2869,6 @@ public final class Settings {
         public static final String IS_TABLET = "is_tablet";
 
         /**
-         * Determine friction of scrolling
-         *
-         * @hide
-         */
-        public static final String SCROLL_FRICTION = "scroll_friction";
-
-        /**
          * Whether to allow the device to use landscape lockscreen layouts
          * 
          * @hide
