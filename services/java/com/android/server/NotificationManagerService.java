@@ -1378,7 +1378,7 @@ public class NotificationManagerService extends INotificationManager.Stub
         }
     }
 
-    class QuietHoursSettingsObserver extends ContentObserver {
+/*    class QuietHoursSettingsObserver extends ContentObserver {
         QuietHoursSettingsObserver(Handler handler) {
             super(handler);
         }
@@ -1420,5 +1420,5 @@ public class NotificationManagerService extends INotificationManager.Stub
             mAnnoyingNotificationThreshold = Settings.System.getLong(resolver,
                     Settings.System.MUTE_ANNOYING_NOTIFICATIONS_THRESHOLD, 0);
         }
-    }
+    } */
 }
