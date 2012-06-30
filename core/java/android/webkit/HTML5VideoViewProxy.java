@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2009 The Android Open Source Project
- * Copyright (c) 2011, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,7 +40,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * <p>Proxy for HTML5 video views.</p>
+ * <p>Proxy for HTML5 video views.
  */
 class HTML5VideoViewProxy extends Handler
                           implements MediaPlayer.OnPreparedListener,
@@ -60,9 +59,6 @@ class HTML5VideoViewProxy extends Handler
     private static final int LOAD_DEFAULT_POSTER = 104;
     private static final int BUFFERING_START     = 105;
     private static final int BUFFERING_END       = 106;
-    private static final int INIT                = 107;
-    private static final int TERM                = 108;
-    private static final int SET_VOLUME          = 109;
 
     // Message Ids to be handled on the WebCore thread
     private static final int PREPARED          = 200;
@@ -70,7 +66,6 @@ class HTML5VideoViewProxy extends Handler
     private static final int POSTER_FETCHED    = 202;
     private static final int PAUSED            = 203;
     private static final int STOPFULLSCREEN    = 204;
-    private static final int SIZE_CHANGED      = 205;
 
     // Timer thread -> UI thread
     private static final int TIMEUPDATE = 300;
@@ -88,32 +83,31 @@ class HTML5VideoViewProxy extends Handler
     private PosterDownloader mPosterDownloader;
     // The seek position.
     private int mSeekPosition;
-    // The video layer ID
-    private int mVideoLayerId;
     // A helper class to control the playback. This executes on the UI thread!
-    private final class VideoPlayer {
-        private HTML5VideoViewProxy mProxy;
-        private HTML5VideoView mHTML5VideoView;
+    private static final class VideoPlayer {
+        // The proxy that is currently playing (if any).
+        private static HTML5VideoViewProxy mCurrentProxy;
+        // The VideoView instance. This is a singleton for now, at least until
+        // http://b/issue?id=1973663 is fixed.
+        private static HTML5VideoView mHTML5VideoView;
 
-        private boolean isVideoSelfEnded = false;
+        private static boolean isVideoSelfEnded = false;
         // By using the baseLayer and the current video Layer ID, we can
         // identify the exact layer on the UI thread to use the SurfaceTexture.
-        private int mBaseLayer = 0;
+        private static int mBaseLayer = 0;
 
-        private void setPlayerBuffering(boolean playerBuffering) {
+        private static void setPlayerBuffering(boolean playerBuffering) {
             mHTML5VideoView.setPlayerBuffering(playerBuffering);
-        }
-
-        VideoPlayer(HTML5VideoViewProxy proxy) {
-            mProxy = proxy;
         }
 
         // Every time webView setBaseLayer, this will be called.
         // When we found the Video layer, then we set the Surface Texture to it.
-        public void setBaseLayer(int layer) {
+        // Otherwise, we may want to delete the Surface Texture to save memory.
+        public static void setBaseLayer(int layer) {
             // Don't do this for full screen mode.
             if (mHTML5VideoView != null
-                && !mHTML5VideoView.isFullScreenMode()) {
+                && !mHTML5VideoView.isFullScreenMode()
+                && !mHTML5VideoView.surfaceTextureDeleted()) {
                 mBaseLayer = layer;
 
                 int currentVideoLayerId = mHTML5VideoView.getVideoLayerId();
@@ -123,87 +117,104 @@ class HTML5VideoViewProxy extends Handler
                 if (layer != 0 && surfTexture != null && currentVideoLayerId != -1) {
                     int playerState = mHTML5VideoView.getCurrentState();
                     if (mHTML5VideoView.getPlayerBuffering())
-                        playerState = HTML5VideoView.STATE_BUFFERING;
-                    nativeSendSurfaceTexture(surfTexture,
+                        playerState = HTML5VideoView.STATE_NOTPREPARED;
+                    boolean foundInTree = nativeSendSurfaceTexture(surfTexture,
                             layer, currentVideoLayerId, textureName,
                             playerState);
+                    if (playerState >= HTML5VideoView.STATE_PREPARED
+                            && !foundInTree) {
+                        mHTML5VideoView.pauseAndDispatch(mCurrentProxy);
+                        mHTML5VideoView.deleteSurfaceTexture();
+                    }
                 }
             }
         }
 
         // When a WebView is paused, we also want to pause the video in it.
-        public void pauseAndDispatch() {
-            if (mHTML5VideoView != null)
-                mHTML5VideoView.pauseAndDispatch(mProxy);
-        }
-
-        public void suspend() {
+        public static void pauseAndDispatch() {
             if (mHTML5VideoView != null) {
-                mHTML5VideoView.pause();
-                mHTML5VideoView.release();
-                mHTML5VideoView = null;
-                // isVideoSelfEnded is false when video playback
-                // has ended but is not complete.
-                // isVideoSelfEnded is true only when playback is complete.
-                isVideoSelfEnded = false;
-                end();
+                mHTML5VideoView.pauseAndDispatch(mCurrentProxy);
+                // When switching out, clean the video content on the old page
+                // by telling the layer not readyToUseSurfTex.
+                setBaseLayer(mBaseLayer);
             }
         }
 
-        public void enterFullScreenVideo(int layerId, String url, WebView webView) {
-            // Save the inline video info and inherit it in the full screen
-            int savePosition = 0;
-            boolean savedIsPlaying = false;
-            if (mHTML5VideoView != null) {
-                // If we are playing the same video, then it is better to
-                // save the current position.
-                if (mHTML5VideoView.getCurrentState() >= HTML5VideoView.STATE_PREPARED) {
-                    savePosition = mHTML5VideoView.getCurrentPosition();
-                    savedIsPlaying = mHTML5VideoView.isPlaying();
-                } else {
-                    // If fullscreen mode is entered into before inline video has been prepared,
-                    // the expected behaviour is for fullscreen video to start automatically.
-                    savedIsPlaying = true;
+        public static void enterFullScreenVideo(int layerId, String url,
+                HTML5VideoViewProxy proxy, WebView webView) {
+                // Save the inline video info and inherit it in the full screen
+                int savePosition = 0;
+                boolean savedIsPlaying = false;
+                if (mHTML5VideoView != null) {
+                    // If we are playing the same video, then it is better to
+                    // save the current position.
+                    if (layerId == mHTML5VideoView.getVideoLayerId()) {
+                        savePosition = mHTML5VideoView.getCurrentPosition();
+                        savedIsPlaying = mHTML5VideoView.isPlaying();
+                    }
+                    mHTML5VideoView.pauseAndDispatch(mCurrentProxy);
+                    mHTML5VideoView.release();
                 }
-                mHTML5VideoView.release();
-            }
-            mHTML5VideoView = new HTML5VideoFullScreen(mProxy.getContext(),
-                    layerId, savePosition, savedIsPlaying);
+                mHTML5VideoView = new HTML5VideoFullScreen(proxy.getContext(),
+                        layerId, savePosition, savedIsPlaying);
+                mCurrentProxy = proxy;
 
-            mHTML5VideoView.setVideoURI(url, mProxy);
+                mHTML5VideoView.setVideoURI(url, mCurrentProxy);
 
-            mHTML5VideoView.enterFullScreenVideoState(layerId, mProxy, webView);
+                mHTML5VideoView.enterFullScreenVideoState(layerId, proxy, webView);
         }
 
         // This is on the UI thread.
-        public void play(String url, int time, WebChromeClient client, int videoLayerId) {
-            if (mHTML5VideoView == null
-                || (mHTML5VideoView instanceof HTML5VideoFullScreen
-                    // Some HTML5 video pages make javascript "play" calls even while the
-                    // video is in fullscreen mode. This check is added to prevent this case
-                    // from releasing the fullscreen video view.
-                    && mHTML5VideoView.fullScreenExited())) {
+        // When native tell Java to play, we need to check whether or not it is
+        // still the same video by using videoLayerId and treat it differently.
+        public static void play(String url, int time, HTML5VideoViewProxy proxy,
+                WebChromeClient client, int videoLayerId) {
+            int currentVideoLayerId = -1;
+            boolean backFromFullScreenMode = false;
+            if (mHTML5VideoView != null) {
+                currentVideoLayerId = mHTML5VideoView.getVideoLayerId();
+                backFromFullScreenMode = mHTML5VideoView.fullScreenExited();
+            }
+
+            if (backFromFullScreenMode
+                || currentVideoLayerId != videoLayerId
+                || mHTML5VideoView.surfaceTextureDeleted()) {
+                // Here, we handle the case when switching to a new video,
+                // either inside a WebView or across WebViews
+                // For switching videos within a WebView or across the WebView,
+                // we need to pause the old one and re-create a new media player
+                // inside the HTML5VideoView.
                 if (mHTML5VideoView != null) {
+                    if (!backFromFullScreenMode) {
+                        mHTML5VideoView.pauseAndDispatch(mCurrentProxy);
+                    }
                     // release the media player to avoid finalize error
                     mHTML5VideoView.release();
                 }
+                mCurrentProxy = proxy;
                 mHTML5VideoView = new HTML5VideoInline(videoLayerId, time, false);
-                mHTML5VideoView.setVideoURI(url, mProxy);
-                mHTML5VideoView.prepareDataAndDisplayMode(mProxy);
-                mHTML5VideoView.seekTo(time);
-            } else {
+
+                mHTML5VideoView.setVideoURI(url, mCurrentProxy);
+                mHTML5VideoView.prepareDataAndDisplayMode(proxy);
+            } else if (mCurrentProxy == proxy) {
                 // Here, we handle the case when we keep playing with one video
                 if (!mHTML5VideoView.isPlaying()) {
+                    mHTML5VideoView.seekTo(time);
                     mHTML5VideoView.start();
                 }
+            } else if (mCurrentProxy != null) {
+                // Some other video is already playing. Notify the caller that
+                // its playback ended.
+                proxy.dispatchOnEnded();
             }
         }
 
-        public boolean isPlaying() {
-            return (mHTML5VideoView != null && mHTML5VideoView.isPlaying());
+        public static boolean isPlaying(HTML5VideoViewProxy proxy) {
+            return (mCurrentProxy == proxy && mHTML5VideoView != null
+                    && mHTML5VideoView.isPlaying());
         }
 
-        public int getCurrentPosition() {
+        public static int getCurrentPosition() {
             int currentPosMs = 0;
             if (mHTML5VideoView != null) {
                 currentPosMs = mHTML5VideoView.getCurrentPosition();
@@ -211,19 +222,19 @@ class HTML5VideoViewProxy extends Handler
             return currentPosMs;
         }
 
-        public void seek(int time) {
-            if (time >= 0 && mHTML5VideoView != null) {
+        public static void seek(int time, HTML5VideoViewProxy proxy) {
+            if (mCurrentProxy == proxy && time >= 0 && mHTML5VideoView != null) {
                 mHTML5VideoView.seekTo(time);
             }
         }
 
-        public void pause() {
-            if (mHTML5VideoView != null) {
+        public static void pause(HTML5VideoViewProxy proxy) {
+            if (mCurrentProxy == proxy && mHTML5VideoView != null) {
                 mHTML5VideoView.pause();
             }
         }
 
-        public void onPrepared() {
+        public static void onPrepared() {
             if (!mHTML5VideoView.isFullScreenMode() || mHTML5VideoView.getAutostart()) {
                 mHTML5VideoView.start();
             }
@@ -232,32 +243,21 @@ class HTML5VideoViewProxy extends Handler
             }
         }
 
-        public void end() {
-            if (mProxy != null) {
+        public static void end() {
+            if (mCurrentProxy != null) {
                 if (isVideoSelfEnded)
-                    mProxy.dispatchOnEnded();
+                    mCurrentProxy.dispatchOnEnded();
                 else
-                    mProxy.dispatchOnPaused();
+                    mCurrentProxy.dispatchOnPaused();
             }
             isVideoSelfEnded = false;
         }
-
-        public void setVolume(float volume) {
-            if (mHTML5VideoView != null) {
-                mHTML5VideoView.setVolume(volume);
-            }
-        }
-
-        public boolean isPrepared() {
-            return mHTML5VideoView.getCurrentState() >= HTML5VideoView.STATE_PREPARED;
-        }
     }
-    private VideoPlayer mVideoPlayer;
 
     // A bunch event listeners for our VideoView
     // MediaPlayer.OnPreparedListener
     public void onPrepared(MediaPlayer mp) {
-        mVideoPlayer.onPrepared();
+        VideoPlayer.onPrepared();
         Message msg = Message.obtain(mWebCoreHandler, PREPARED);
         Map<String, Object> map = new HashMap<String, Object>();
         map.put("dur", new Integer(mp.getDuration()));
@@ -266,21 +266,6 @@ class HTML5VideoViewProxy extends Handler
         msg.obj = map;
         mWebCoreHandler.sendMessage(msg);
     }
-
-    //MediaPlayer.OnVideoSizeChangedListener
-    public void onVideoSizeChanged(MediaPlayer mp, int width, int height) {
-        Message msg = Message.obtain(mWebCoreHandler, SIZE_CHANGED);
-        Map<String, Object> map = new HashMap<String, Object>();
-        if (mVideoPlayer.isPrepared())
-            map.put("dur", new Integer(mp.getDuration()));
-        else
-            map.put("dur", new Integer(0));
-        map.put("width", new Integer(width));
-        map.put("height", new Integer(height));
-        msg.obj = map;
-        mWebCoreHandler.sendMessage(msg);
-    }
-
 
     // MediaPlayer.OnCompletionListener;
     public void onCompletion(MediaPlayer mp) {
@@ -333,26 +318,25 @@ class HTML5VideoViewProxy extends Handler
                 String url = (String) msg.obj;
                 WebChromeClient client = mWebView.getWebChromeClient();
                 int videoLayerID = msg.arg1;
-                int seekPosition = msg.arg2;
                 if (client != null) {
-                    mVideoPlayer.play(url, seekPosition, client, videoLayerID);
+                    VideoPlayer.play(url, mSeekPosition, this, client, videoLayerID);
                 }
                 break;
             }
             case SEEK: {
                 Integer time = (Integer) msg.obj;
                 mSeekPosition = time;
-                mVideoPlayer.seek(mSeekPosition);
+                VideoPlayer.seek(mSeekPosition, this);
                 break;
             }
             case PAUSE: {
-                mVideoPlayer.pause();
+                VideoPlayer.pause(this);
                 break;
             }
             case ENDED:
                 if (msg.arg1 == 1)
-                    mVideoPlayer.isVideoSelfEnded = true;
-                mVideoPlayer.end();
+                    VideoPlayer.isVideoSelfEnded = true;
+                VideoPlayer.end();
                 break;
             case ERROR: {
                 WebChromeClient client = mWebView.getWebChromeClient();
@@ -369,34 +353,17 @@ class HTML5VideoViewProxy extends Handler
                 break;
             }
             case TIMEUPDATE: {
-                if (mVideoPlayer.isPlaying()) {
+                if (VideoPlayer.isPlaying(this)) {
                     sendTimeupdate();
                 }
                 break;
             }
             case BUFFERING_START: {
-                mVideoPlayer.setPlayerBuffering(true);
+                VideoPlayer.setPlayerBuffering(true);
                 break;
             }
             case BUFFERING_END: {
-                mVideoPlayer.setPlayerBuffering(false);
-                break;
-            }
-            case INIT: {
-                // Pass Proxy into webview, such that every time we have a setBaseLayer
-                // call, we tell this Proxy to call the native to update the layer tree
-                // for the Video Layer's surface texture info
-                mWebView.registerHTML5VideoViewProxy(this);
-                break;
-            }
-            case TERM: {
-                mVideoPlayer.suspend();
-                mWebView.unregisterHTML5VideoViewProxy(this);
-                break;
-            }
-            case SET_VOLUME: {
-                float vol = ((Float)msg.obj).floatValue();
-                mVideoPlayer.setVolume(vol);
+                VideoPlayer.setPlayerBuffering(false);
                 break;
             }
         }
@@ -556,21 +523,19 @@ class HTML5VideoViewProxy extends Handler
      * @param webView is the WebView that hosts the video.
      * @param nativePtr is the C++ pointer to the MediaPlayerPrivate object.
      */
-    private HTML5VideoViewProxy(WebView webView, int nativePtr, int videoLayerId) {
+    private HTML5VideoViewProxy(WebView webView, int nativePtr) {
         // This handler is for the main (UI) thread.
         super(Looper.getMainLooper());
         // Save the WebView object.
         mWebView = webView;
+        // Pass Proxy into webview, such that every time we have a setBaseLayer
+        // call, we tell this Proxy to call the native to update the layer tree
+        // for the Video Layer's surface texture info
+        mWebView.setHTML5VideoViewProxy(this);
         // Save the native ptr
         mNativePointer = nativePtr;
-        // Save the videoLayerId. This is needed early in order to support fullscreen mode
-        // before video playback
-        mVideoLayerId = videoLayerId;
         // create the message handler for this thread
         createWebCoreHandler();
-        mVideoPlayer = new VideoPlayer(this);
-        Message message = obtainMessage(INIT);
-        sendMessage(message);
     }
 
     private void createWebCoreHandler() {
@@ -579,15 +544,6 @@ class HTML5VideoViewProxy extends Handler
             public void handleMessage(Message msg) {
                 switch (msg.what) {
                     case PREPARED: {
-                        Map<String, Object> map = (Map<String, Object>) msg.obj;
-                        Integer duration = (Integer) map.get("dur");
-                        Integer width = (Integer) map.get("width");
-                        Integer height = (Integer) map.get("height");
-                        nativeOnPrepared(duration.intValue(), width.intValue(),
-                                height.intValue(), mNativePointer);
-                        break;
-                    }
-                    case SIZE_CHANGED: {
                         Map<String, Object> map = (Map<String, Object>) msg.obj;
                         Integer duration = (Integer) map.get("dur");
                         Integer width = (Integer) map.get("width");
@@ -631,7 +587,7 @@ class HTML5VideoViewProxy extends Handler
 
     private void sendTimeupdate() {
         Message msg = Message.obtain(mWebCoreHandler, TIMEUPDATE);
-        msg.arg1 = mVideoPlayer.getCurrentPosition();
+        msg.arg1 = VideoPlayer.getCurrentPosition();
         mWebCoreHandler.sendMessage(msg);
     }
 
@@ -648,9 +604,12 @@ class HTML5VideoViewProxy extends Handler
         if (url == null) {
             return;
         }
+
+        if (position > 0) {
+            seek(position);
+        }
         Message message = obtainMessage(PLAY);
         message.arg1 = videoLayerID;
-        message.arg2 = position;
         message.obj = url;
         sendMessage(message);
     }
@@ -682,8 +641,6 @@ class HTML5VideoViewProxy extends Handler
         if (mPosterDownloader != null) {
             mPosterDownloader.cancelAndReleaseQueue();
         }
-        Message message = obtainMessage(TERM);
-        sendMessage(message);
         mNativePointer = 0;
     }
 
@@ -706,35 +663,17 @@ class HTML5VideoViewProxy extends Handler
         mPosterDownloader.start();
     }
 
-    // These functions are called from UI thread only by WebView.
+    // These three function are called from UI thread only by WebView.
     public void setBaseLayer(int layer) {
-        mVideoPlayer.setBaseLayer(layer);
+        VideoPlayer.setBaseLayer(layer);
     }
 
     public void pauseAndDispatch() {
-        mVideoPlayer.pauseAndDispatch();
-    }
-
-    public void suspend() {
-        mVideoPlayer.suspend();
+        VideoPlayer.pauseAndDispatch();
     }
 
     public void enterFullScreenVideo(int layerId, String url) {
-        mVideoPlayer.enterFullScreenVideo(layerId, url, mWebView);
-    }
-
-    public int getVideoLayerId() {
-        return mVideoLayerId;
-    }
-    // End functions called from UI thread only by WebView
-
-    /**
-     * Change the volume of the playback
-     */
-    public void setVolume(float volume) {
-        Message message = obtainMessage(SET_VOLUME);
-        message.obj = new Float(volume);
-        sendMessage(message);
+        VideoPlayer.enterFullScreenVideo(layerId, url, this, mWebView);
     }
 
     /**
@@ -743,8 +682,8 @@ class HTML5VideoViewProxy extends Handler
      *
      * @return a new HTML5VideoViewProxy object.
      */
-    public static HTML5VideoViewProxy getInstance(WebViewCore webViewCore, int nativePtr, int videoLayerId) {
-        return new HTML5VideoViewProxy(webViewCore.getWebView(), nativePtr, videoLayerId);
+    public static HTML5VideoViewProxy getInstance(WebViewCore webViewCore, int nativePtr) {
+        return new HTML5VideoViewProxy(webViewCore.getWebView(), nativePtr);
     }
 
     /* package */ WebView getWebView() {
@@ -752,7 +691,6 @@ class HTML5VideoViewProxy extends Handler
     }
 
     private native void nativeOnPrepared(int duration, int width, int height, int nativePointer);
-    private native void nativeOnSizeChanged(int duration, int width, int height, int nativePointer);
     private native void nativeOnEnded(int nativePointer);
     private native void nativeOnPaused(int nativePointer);
     private native void nativeOnPosterFetched(Bitmap poster, int nativePointer);

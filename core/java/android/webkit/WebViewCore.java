@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2007 The Android Open Source Project
- * Copyright (c) 2012, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,11 +46,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
-import java.util.Vector;
-import org.json.*;
 
 import junit.framework.Assert;
-import org.codeaurora.Performance;
 
 /**
  * @hide
@@ -443,52 +439,6 @@ public final class WebViewCore {
     }
 
     /**
-     * Shows a prompt to ask the user to set the Navigator permission state
-     * for the given feature for the current website.
-     * @param features device apis for which permissions are requested
-     * @param appid The website for which navigator permissions are
-     *     requested.
-     */
-    protected void navigatorPermissionsShowPrompt(Vector<String> features, String appid) {
-        mCallbackProxy.onNavigatorPermissionsShowPrompt(features,appid,
-                new GeolocationPermissions.Callback() {
-          public void invoke(String appid, boolean allow, boolean remember) {
-            NavigatorPermissionsData data = new NavigatorPermissionsData();
-
-            try {
-                // Get the JSON object from the string and then extract
-                // appid and features
-                JSONObject nJson = new JSONObject(appid);
-                if(nJson.has("appid")) {
-                    data.mAppid = (String)nJson.get("appid");
-                }
-                Vector<String> tmpFeatures = new Vector<String>();
-                JSONArray jArr;
-                if(nJson.has("features")) {
-                    jArr = nJson.getJSONArray("features");
-                    for(int i=0; i<jArr.length(); i++)
-                        tmpFeatures.add((String)jArr.get(i));
-                }
-                data.mFeatures = tmpFeatures;
-            } catch (org.json.JSONException e) {
-                Log.e(LOGTAG, "Caught excepttion" + e);
-            }
-            data.mAllow = allow;
-            data.mRemember = remember;
-            // Marshall to WebCore thread.
-            sendMessage(EventHub.NAVIGATOR_PERMISSIONS_PROVIDE, data);
-          }
-        });
-    }
-
-    /**
-     * Hides the navigator permissions prompt.
-     */
-    protected void navigatorPermissionsHidePrompt() {
-        mCallbackProxy.onNavigatorPermissionsHidePrompt();
-    }
-
-    /**
      * Invoke a javascript confirm dialog.
      * @param message The message displayed in the dialog.
      * @return True if the user confirmed or false if the user cancelled.
@@ -693,7 +643,6 @@ public final class WebViewCore {
      *     life of the current page.
      */
     private native void nativeGeolocationPermissionsProvide(String origin, boolean allow, boolean remember);
-    private native void nativeFeaturePermissionsProvide(Vector<String> features, String appid, boolean allow, boolean remember);
 
     /**
      * Provide WebCore with the previously visted links from the history database
@@ -722,8 +671,6 @@ public final class WebViewCore {
         private static final int INITIALIZE = 0;
         private static final int REDUCE_PRIORITY = 1;
         private static final int RESUME_PRIORITY = 2;
-        private static Performance mPerf = new Performance();
-        private static final int MIN_FREQ_DURING_SCROLLING = 10;
 
         public void run() {
             Looper.prepare();
@@ -743,20 +690,11 @@ public final class WebViewCore {
                                 Process.setThreadPriority(
                                         Process.THREAD_PRIORITY_DEFAULT + 3 *
                                         Process.THREAD_PRIORITY_LESS_FAVORABLE);
-                                /* Disable power collapse and setup the min frequency */
-                                /* 0 means disabling power collapse */
-                                mPerf.cpuSetOptions(Performance.CPUOPT_CPU0_PWRCLSP,0);
-                                mPerf.cpuSetOptions(Performance.CPUOPT_CPU0_FREQMIN,MIN_FREQ_DURING_SCROLLING);
                                 break;
 
                             case RESUME_PRIORITY:
                                 Process.setThreadPriority(
                                         Process.THREAD_PRIORITY_DEFAULT);
-                                /* Enable power collapse and reset the min frequency */
-                                /* 1 means enabling power collapse */
-                                mPerf.cpuSetOptions(Performance.CPUOPT_CPU0_PWRCLSP,1);
-                                mPerf.cpuSetOptions(Performance.CPUOPT_CPU0_FREQMIN,0);
-  
                                 break;
 
                             case EventHub.ADD_PACKAGE_NAME:
@@ -921,13 +859,6 @@ public final class WebViewCore {
 
     static class GeolocationPermissionsData {
         String mOrigin;
-        boolean mAllow;
-        boolean mRemember;
-    }
-
-    static class NavigatorPermissionsData {
-        Vector<String> mFeatures;
-        String mAppid;
         boolean mAllow;
         boolean mRemember;
     }
@@ -1110,8 +1041,6 @@ public final class WebViewCore {
         static final int PLUGIN_SURFACE_READY = 195;
 
         static final int NOTIFY_ANIMATION_STARTED = 196;
-        // Feature Permissions
-        static final int NAVIGATOR_PERMISSIONS_PROVIDE = 197;
 
         // private message ids
         private static final int DESTROY =     200;
@@ -1625,14 +1554,6 @@ public final class WebViewCore {
                                     (GeolocationPermissionsData) msg.obj;
                             nativeGeolocationPermissionsProvide(data.mOrigin,
                                     data.mAllow, data.mRemember);
-                            break;
-
-                        case NAVIGATOR_PERMISSIONS_PROVIDE:
-                            NavigatorPermissionsData tData =
-                                    (NavigatorPermissionsData) msg.obj;
-                            Vector<String> t = tData.mFeatures;
-                            nativeFeaturePermissionsProvide(tData.mFeatures,
-                                    tData.mAppid, tData.mAllow, tData.mRemember);
                             break;
 
                         case SPLIT_PICTURE_SET:

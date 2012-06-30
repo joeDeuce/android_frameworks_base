@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2006 The Android Open Source Project
- * Copyright (c) 2011, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -674,9 +673,9 @@ public class WebView extends AbsoluteLayout
     private int mTouchHighlightY;
     private long mTouchHighlightRequested;
 
-    // The HTML5VideoViewManager is used to tell the Video to update layer tree at
+    // Basically this proxy is used to tell the Video to update layer tree at
     // SetBaseLayer time and to pause when WebView paused.
-    private HTML5VideoViewManager mHTML5VideoViewManager;
+    private HTML5VideoViewProxy mHTML5VideoViewProxy;
 
     // If we are using a set picture, don't send view updates to webkit
     private boolean mBlockWebkitViewMessages = false;
@@ -1289,7 +1288,7 @@ public class WebView extends AbsoluteLayout
         // Initially use a size of two, since the user is likely to only hold
         // down two keys at a time (shift + another key)
         mKeysPressed = new Vector<Integer>(2);
-        mHTML5VideoViewManager = null;
+        mHTML5VideoViewProxy = null ;
     }
 
     @Override
@@ -2073,8 +2072,6 @@ public class WebView extends AbsoluteLayout
 
     private void loadUrlImpl(String url, Map<String, String> extraHeaders) {
         switchOutDrawHistory();
-        if (mHTML5VideoViewManager != null)
-            mHTML5VideoViewManager.suspend();
         WebViewCore.GetUrlData arg = new WebViewCore.GetUrlData();
         arg.mUrl = url;
         arg.mExtraHeaders = extraHeaders;
@@ -2267,8 +2264,6 @@ public class WebView extends AbsoluteLayout
         checkThread();
         clearHelpers();
         switchOutDrawHistory();
-        if (mHTML5VideoViewManager != null)
-            mHTML5VideoViewManager.suspend();
         mWebViewCore.sendMessage(EventHub.RELOAD);
     }
 
@@ -2357,8 +2352,6 @@ public class WebView extends AbsoluteLayout
 
     private void goBackOrForward(int steps, boolean ignoreSnapshot) {
         if (steps != 0) {
-            if (mHTML5VideoViewManager != null)
-                mHTML5VideoViewManager.suspend();
             clearHelpers();
             mWebViewCore.sendMessage(EventHub.GO_BACK_FORWARD, steps,
                     ignoreSnapshot ? 1 : 0);
@@ -3295,8 +3288,8 @@ public class WebView extends AbsoluteLayout
             mWebViewCore.sendMessage(EventHub.ON_PAUSE);
             // We want to pause the current playing video when switching out
             // from the current WebView/tab.
-            if (mHTML5VideoViewManager != null) {
-                mHTML5VideoViewManager.pauseAndDispatch();
+            if (mHTML5VideoViewProxy != null) {
+                mHTML5VideoViewProxy.pauseAndDispatch();
             }
             if (mNativeClass != 0) {
                 nativeSetPauseDrawing(mNativeClass, true);
@@ -4527,8 +4520,9 @@ public class WebView extends AbsoluteLayout
             return;
         nativeSetBaseLayer(layer, invalRegion, showVisualIndicator,
                 isPictureAfterFirstLayout, registerPageSwapCallback);
-        if (mHTML5VideoViewManager != null)
-            mHTML5VideoViewManager.setBaseLayer(layer);
+        if (mHTML5VideoViewProxy != null) {
+            mHTML5VideoViewProxy.setBaseLayer(layer);
+        }
     }
 
     int getBaseLayer() {
@@ -8653,8 +8647,9 @@ public class WebView extends AbsoluteLayout
                     int layerId = msg.arg1;
 
                     String url = (String) msg.obj;
-                    if (mHTML5VideoViewManager != null)
-                        mHTML5VideoViewManager.enterFullScreenVideo(layerId, url);
+                    if (mHTML5VideoViewProxy != null) {
+                        mHTML5VideoViewProxy.enterFullScreenVideo(layerId, url);
+                    }
                     break;
 
                 case SHOW_FULLSCREEN: {
@@ -9435,21 +9430,8 @@ public class WebView extends AbsoluteLayout
      *
      * @hide only used by the Browser
      */
-    public void registerHTML5VideoViewProxy(HTML5VideoViewProxy proxy) {
-        if (mHTML5VideoViewManager == null)
-            mHTML5VideoViewManager = new HTML5VideoViewManager(this);
-        mHTML5VideoViewManager.registerProxy(proxy);
-    }
-
-    /**
-     * Clean up method for registerHTML5VideoViewProxy
-     *
-     * @hide only used by the Browser
-     */
-    public void unregisterHTML5VideoViewProxy(HTML5VideoViewProxy proxy) {
-        if (mHTML5VideoViewManager != null) {
-            mHTML5VideoViewManager.unregisterProxy(proxy);
-        }
+    public void setHTML5VideoViewProxy(HTML5VideoViewProxy proxy) {
+        mHTML5VideoViewProxy = proxy;
     }
 
     /**

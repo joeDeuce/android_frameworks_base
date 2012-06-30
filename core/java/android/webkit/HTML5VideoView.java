@@ -1,30 +1,3 @@
-/* Copyright (c) 2011, Code Aurora Forum. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above
- *       copyright notice, this list of conditions and the following
- *       disclaimer in the documentation and/or other materials provided
- *       with the distribution.
- *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
- * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
- * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
- * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
- * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
- * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
 
 package android.webkit;
 
@@ -43,8 +16,7 @@ import java.util.TimerTask;
 /**
  * @hide This is only used by the browser
  */
-public class HTML5VideoView implements MediaPlayer.OnPreparedListener,
-                            MediaPlayer.OnVideoSizeChangedListener {
+public class HTML5VideoView implements MediaPlayer.OnPreparedListener {
 
     protected static final String LOGTAG = "HTML5VideoView";
 
@@ -62,8 +34,7 @@ public class HTML5VideoView implements MediaPlayer.OnPreparedListener,
     static final int STATE_NOTPREPARED        = 1;
     static final int STATE_PREPARED           = 2;
     static final int STATE_PLAYING            = 3;
-    static final int STATE_BUFFERING          = 4;
-    static final int STATE_RELEASED           = 5;
+    static final int STATE_RELEASED           = 4;
     protected int mCurrentState;
 
     protected HTML5VideoViewProxy mProxy;
@@ -91,12 +62,7 @@ public class HTML5VideoView implements MediaPlayer.OnPreparedListener,
 
     // The timer for timeupate events.
     // See http://www.whatwg.org/specs/web-apps/current-work/#event-media-timeupdate
-    protected Timer mTimer;
-
-    // The video size will be ready when prepared. Used to make sure the aspect
-    // ratio is correct.
-    protected int mVideoWidth;
-    protected int mVideoHeight;
+    protected static Timer mTimer;
 
     // The spec says the timer should fire every 250 ms or less.
     private static final int TIMEUPDATE_PERIOD = 250;  // ms
@@ -115,8 +81,7 @@ public class HTML5VideoView implements MediaPlayer.OnPreparedListener,
             }
             mPlayer.start();
             setPlayerBuffering(false);
-        } else
-            mAutostart = true;
+        }
     }
 
     public void pause() {
@@ -165,7 +130,6 @@ public class HTML5VideoView implements MediaPlayer.OnPreparedListener,
 
     public void release() {
         if (mCurrentState != STATE_RELEASED) {
-            stopPlayback();
             mPlayer.release();
         }
         mCurrentState = STATE_RELEASED;
@@ -183,12 +147,6 @@ public class HTML5VideoView implements MediaPlayer.OnPreparedListener,
 
     public boolean getPauseDuringPreparing() {
         return mPauseDuringPreparing;
-    }
-
-    public void setVolume(float volume) {
-        if (mCurrentState == STATE_PREPARED) {
-            mPlayer.setVolume(volume, volume);
-        }
     }
 
     // Every time we start a new Video, we create a VideoView and a MediaPlayer
@@ -245,10 +203,6 @@ public class HTML5VideoView implements MediaPlayer.OnPreparedListener,
         mPlayer.setOnInfoListener(proxy);
     }
 
-    public void setOnVideoSizeChangedListener() {
-        mPlayer.setOnVideoSizeChangedListener(this);
-    }
-
     // Normally called immediately after setVideoURI. But for full screen,
     // this should be after surface holder created
     public void prepareDataAndDisplayMode(HTML5VideoViewProxy proxy) {
@@ -259,7 +213,6 @@ public class HTML5VideoView implements MediaPlayer.OnPreparedListener,
         setOnPreparedListener(proxy);
         setOnErrorListener(proxy);
         setOnInfoListener(proxy);
-        setOnVideoSizeChangedListener();
         // When there is exception, we could just bail out silently.
         // No Video will be played though. Write the stack for debug
         try {
@@ -290,7 +243,7 @@ public class HTML5VideoView implements MediaPlayer.OnPreparedListener,
         }
     }
 
-    private final class TimeupdateTask extends TimerTask {
+    private static final class TimeupdateTask extends TimerTask {
         private HTML5VideoViewProxy mProxy;
 
         public TimeupdateTask(HTML5VideoViewProxy proxy) {
@@ -313,14 +266,6 @@ public class HTML5VideoView implements MediaPlayer.OnPreparedListener,
         if (mPauseDuringPreparing) {
             pauseAndDispatch(mProxy);
             mPauseDuringPreparing = false;
-        }
-    }
-
-    public void onVideoSizeChanged(MediaPlayer mp, int width, int height) {
-        mVideoWidth = width;
-        mVideoHeight = height;
-        if (mProxy != null) {
-            mProxy.onVideoSizeChanged(mp, width, height);
         }
     }
 
@@ -354,6 +299,9 @@ public class HTML5VideoView implements MediaPlayer.OnPreparedListener,
         return null;
     }
 
+    public void deleteSurfaceTexture() {
+    }
+
     public int getTextureName() {
         return 0;
     }
@@ -370,13 +318,19 @@ public class HTML5VideoView implements MediaPlayer.OnPreparedListener,
         switchProgressView(playerBuffering);
     }
 
+
     protected void switchProgressView(boolean playerBuffering) {
         // Only used in HTML5VideoFullScreen
     }
 
+    public boolean surfaceTextureDeleted() {
+        // Only meaningful for HTML5VideoInline
+        return false;
+    }
+
     public boolean fullScreenExited() {
         // Only meaningful for HTML5VideoFullScreen
-        return true;
+        return false;
     }
 
 }

@@ -71,6 +71,11 @@ public class HTML5VideoFullScreen extends HTML5VideoView
     // The container for the progress view and video view
     private static FrameLayout mLayout;
 
+    // The video size will be ready when prepared. Used to make sure the aspect
+    // ratio is correct.
+    private int mVideoWidth;
+    private int mVideoHeight;
+
     SurfaceHolder.Callback mSHCallback = new SurfaceHolder.Callback()
     {
         public void surfaceChanged(SurfaceHolder holder, int format,
@@ -191,12 +196,9 @@ public class HTML5VideoFullScreen extends HTML5VideoView
         if (mProgressView != null) {
             mProgressView.setVisibility(View.GONE);
         }
-    }
 
-    @Override
-    public void onVideoSizeChanged(MediaPlayer mp, int width, int height) {
-        super.onVideoSizeChanged(mp, width, height);
-
+        mVideoWidth = mp.getVideoWidth();
+        mVideoHeight = mp.getVideoHeight();
         // This will trigger the onMeasure to get the display size right.
         mVideoSurfaceView.getHolder().setFixedSize(mVideoWidth, mVideoHeight);
     }
