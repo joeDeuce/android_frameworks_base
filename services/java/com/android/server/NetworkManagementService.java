@@ -30,7 +30,6 @@ import static com.android.server.NetworkManagementSocketTagger.PROP_QTAGUID_ENAB
 
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.content.res.Resources;
 import android.net.INetworkManagementEventObserver;
 import android.net.InterfaceConfiguration;
 import android.net.LinkAddress;
@@ -47,7 +46,6 @@ import android.provider.Settings;
 import android.util.Log;
 import android.util.Slog;
 import android.util.SparseBooleanArray;
-import java.util.List;
 
 import com.android.internal.net.NetworkStatsFactory;
 import com.google.android.collect.Sets;
@@ -115,7 +113,6 @@ public class NetworkManagementService extends INetworkManagementService.Stub
         public static final int InterfaceTxThrottleResult = 219;
         public static final int QuotaCounterResult        = 220;
         public static final int TetheringStatsResult      = 221;
-        public static final int V6RtrAdvResult            = 223;
 
         public static final int InterfaceChange           = 600;
         public static final int BandwidthControl          = 601;
@@ -369,31 +366,6 @@ public class NetworkManagementService extends INetworkManagementService.Stub
         } catch (NativeDaemonConnectorException e) {
             throw new IllegalStateException(
                     "Cannot communicate with native daemon to list interfaces");
-        }
-    }
-
-    public void addUpstreamV6Interface(String iface) throws IllegalStateException {
-        mContext.enforceCallingOrSelfPermission(
-                android.Manifest.permission.ACCESS_NETWORK_STATE, "NetworkManagementService");
-
-        Slog.d(TAG, "addUpstreamInterface("+ iface + ")");
-        try {
-            mConnector.doCommand("tether interface add_upstream " + iface);
-        } catch (NativeDaemonConnectorException e) {
-            throw new IllegalStateException("Cannot add upstream interface");
-        }
-    }
-
-    public void removeUpstreamV6Interface(String iface) throws IllegalStateException {
-        mContext.enforceCallingOrSelfPermission(
-                android.Manifest.permission.ACCESS_NETWORK_STATE, "NetworkManagementService");
-
-        Slog.d(TAG, "removeUpstreamInterface(" + iface + ")");
-
-        try {
-            mConnector.doCommand("tether interface remove_upstream " + iface);
-        } catch (NativeDaemonConnectorException e) {
-            throw new IllegalStateException("Cannot remove upstream interface");
         }
     }
 
@@ -905,11 +877,11 @@ public class NetworkManagementService extends INetworkManagementService.Stub
 
     private void modifyNat(String cmd, String internalInterface, String externalInterface) {
         cmd = String.format("nat %s %s %s", cmd, internalInterface, externalInterface);
-	NetworkInterface internalNetworkInterface = null;
+        NetworkInterface internalNetworkInterface = null;
         try {
             internalNetworkInterface = NetworkInterface.getByName(internalInterface);
         } catch (SocketException e) {
-	    Log.e(TAG, "failed to get ifindex. continuing.");
+            Log.e(TAG, "failed to get ifindex. continuing.");
         }
         if (internalNetworkInterface == null) {
             cmd += " 0";
@@ -1000,16 +972,10 @@ public class NetworkManagementService extends INetworkManagementService.Stub
         mContext.enforceCallingOrSelfPermission(
                 android.Manifest.permission.CHANGE_WIFI_STATE, "NetworkManagementService");
         try {
-            Resources resources = mContext.getResources();
-            String mainIface = resources.getBoolean(
-                    com.android.internal.R.bool.config_wifi_ap_use_single_interface)
-                    ? softapIface : wlanIface;
-
-            if (resources.getBoolean(com.android.internal.R.bool.config_wifi_ap_firmware_reload))
-                wifiFirmwareReload(wlanIface, "AP");
-            mConnector.doCommand(String.format("softap start " + mainIface));
+            wifiFirmwareReload(wlanIface, "AP");
+            mConnector.doCommand(String.format("softap start " + wlanIface));
             if (wifiConfig == null) {
-                mConnector.doCommand(String.format("softap set " + mainIface + " " + softapIface));
+                mConnector.doCommand(String.format("softap set " + wlanIface + " " + softapIface));
             } else {
                 /**
                  * softap set arg1 arg2 arg3 [arg4 arg5 arg6 arg7 arg8]
@@ -1022,7 +988,7 @@ public class NetworkManagementService extends INetworkManagementService.Stub
                  * argv7 - Preamble
                  * argv8 - Max SCB
                  */
-                 String str = String.format("softap set " + mainIface + " " + softapIface +
+                 String str = String.format("softap set " + wlanIface + " " + softapIface +
                                        " %s %s %s", convertQuotedString(wifiConfig.SSID),
                                        getSecurityType(wifiConfig),
                                        convertQuotedString(wifiConfig.preSharedKey));

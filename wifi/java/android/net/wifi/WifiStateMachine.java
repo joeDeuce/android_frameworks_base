@@ -183,6 +183,8 @@ public class WifiStateMachine extends StateMachine {
 
     private AlarmManager mAlarmManager;
     private PendingIntent mScanIntent;
+    private PendingIntent mDriverStopIntent;
+
     /* Tracks current frequency mode */
     private AtomicInteger mFrequencyBand = new AtomicInteger(WifiManager.WIFI_FREQUENCY_BAND_AUTO);
 
@@ -517,6 +519,11 @@ public class WifiStateMachine extends StateMachine {
     private static final String ACTION_START_SCAN =
         "com.android.server.WifiManager.action.START_SCAN";
 
+    private static final String DELAYED_STOP_COUNTER = "DelayedStopCounter";
+    private static final int DRIVER_STOP_REQUEST = 0;
+    private static final String ACTION_DELAYED_DRIVER_STOP =
+        "com.android.server.WifiManager.action.DELAYED_DRIVER_STOP";
+
     /**
      * Keep track of whether WIFI is running.
      */
@@ -609,6 +616,16 @@ public class WifiStateMachine extends StateMachine {
                     }
                 },
                 new IntentFilter(ACTION_START_SCAN));
+
+        mContext.registerReceiver(
+                new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
+                       int counter = intent.getIntExtra(DELAYED_STOP_COUNTER, 0);
+                       sendMessage(obtainMessage(CMD_DELAYED_STOP_DRIVER, counter, 0));
+                    }
+                },
+                new IntentFilter(ACTION_DELAYED_DRIVER_STOP));
 
         mScanResultCache = new LruCache<String, ScanResult>(SCAN_RESULT_CACHE_SIZE);
 
@@ -1627,10 +1644,6 @@ public class WifiStateMachine extends StateMachine {
     private void handleNetworkDisconnect() {
         if (DBG) log("Stopping DHCP and clearing IP");
 
-        /* In case we were in middle of DHCP operation
-           restore back powermode */
-        handlePostDhcpSetup();
-
         /*
          * stop DHCP
          */
@@ -1962,26 +1975,26 @@ public class WifiStateMachine extends StateMachine {
                     switch(message.arg1) {
                         case WIFI_STATE_ENABLING:
                             setWifiState(WIFI_STATE_ENABLING);
-                            if(WifiNative.loadDriver()) {
-                                if (DBG) log("Driver load successful");
-                                sendMessage(CMD_LOAD_DRIVER_SUCCESS);
-                            } else {
-                                if (DBG) log("Failed to load driver!");
-                                setWifiState(WIFI_STATE_UNKNOWN);
-                                sendMessage(CMD_LOAD_DRIVER_FAILURE);
-                            }
                             break;
                         case WIFI_AP_STATE_ENABLING:
                             setWifiApState(WIFI_AP_STATE_ENABLING);
-                            if(WifiNative.loadHotspotDriver()) {
-                                if (DBG) log("Hotspot driver load successful");
-                                sendMessage(CMD_LOAD_DRIVER_SUCCESS);
-                            } else {
-                                if (DBG) log("Failed to load Hotspot driver!");
-                                setWifiState(WIFI_AP_STATE_FAILED);
-                                sendMessage(CMD_LOAD_DRIVER_FAILURE);
-                            }
                             break;
+                    }
+
+                    if(WifiNative.loadDriver()) {
+                        if (DBG) log("Driver load successful");
+                        sendMessage(CMD_LOAD_DRIVER_SUCCESS);
+                    } else {
+                        loge("Failed to load driver!");
+                        switch(message.arg1) {
+                            case WIFI_STATE_ENABLING:
+                                setWifiState(WIFI_STATE_UNKNOWN);
+                                break;
+                            case WIFI_AP_STATE_ENABLING:
+                                setWifiApState(WIFI_AP_STATE_FAILED);
+                                break;
+                        }
+                        sendMessage(CMD_LOAD_DRIVER_FAILURE);
                     }
                     mWakeLock.release();
                 }
@@ -2089,35 +2102,35 @@ public class WifiStateMachine extends StateMachine {
                 public void run() {
                     if (DBG) log(getName() + message.toString() + "\n");
                     mWakeLock.acquire();
-                    switch(message.arg1) {
-                        case WIFI_STATE_DISABLED:
-                        case WIFI_STATE_UNKNOWN:
-                            if(WifiNative.unloadDriver()) {
-                                if (DBG) log("Driver unload successful");
-                                sendMessage(CMD_UNLOAD_DRIVER_SUCCESS);
+                    if(WifiNative.unloadDriver()) {
+                        if (DBG) log("Driver unload successful");
+                        sendMessage(CMD_UNLOAD_DRIVER_SUCCESS);
+
+                        switch(message.arg1) {
+                            case WIFI_STATE_DISABLED:
+                            case WIFI_STATE_UNKNOWN:
                                 setWifiState(message.arg1);
-                            } else {
-                                loge("Failed to unload driver!");
-                                sendMessage(CMD_UNLOAD_DRIVER_FAILURE);
-                                setWifiState(WIFI_STATE_UNKNOWN);
-                            }
-
-                            setWifiState(message.arg1);
-                            break;
-                        case WIFI_AP_STATE_DISABLED:
-                        case WIFI_AP_STATE_FAILED:
-                            if(WifiNative.unloadHotspotDriver()) {
-                                if (DBG) log("Hotspot driver unload successful");
-                                sendMessage(CMD_UNLOAD_DRIVER_SUCCESS);
+                                break;
+                            case WIFI_AP_STATE_DISABLED:
+                            case WIFI_AP_STATE_FAILED:
                                 setWifiApState(message.arg1);
-                            } else {
-                                loge("Failed to unload hotspot driver!");
-                                sendMessage(CMD_UNLOAD_DRIVER_FAILURE);
-                                setWifiApState(WIFI_AP_STATE_FAILED);
-                            }
-                            break;
-                    }
+                                break;
+                        }
+                    } else {
+                        loge("Failed to unload driver!");
+                        sendMessage(CMD_UNLOAD_DRIVER_FAILURE);
 
+                        switch(message.arg1) {
+                            case WIFI_STATE_DISABLED:
+                            case WIFI_STATE_UNKNOWN:
+                                setWifiState(WIFI_STATE_UNKNOWN);
+                                break;
+                            case WIFI_AP_STATE_DISABLED:
+                            case WIFI_AP_STATE_FAILED:
+                                setWifiApState(WIFI_AP_STATE_FAILED);
+                                break;
+                        }
+                    }
                     mWakeLock.release();
                 }
             }).start();
@@ -2607,18 +2620,26 @@ public class WifiStateMachine extends StateMachine {
                         sendMessage(obtainMessage(CMD_DELAYED_STOP_DRIVER, mDelayedStopCounter, 0));
                     } else {
                         /* send regular delayed shut down */
-                        sendMessageDelayed(obtainMessage(CMD_DELAYED_STOP_DRIVER,
-                                mDelayedStopCounter, 0), DELAYED_DRIVER_STOP_MS);
+                        Intent driverStopIntent = new Intent(ACTION_DELAYED_DRIVER_STOP, null);
+                        driverStopIntent.putExtra(DELAYED_STOP_COUNTER, mDelayedStopCounter);
+                        mDriverStopIntent = PendingIntent.getBroadcast(mContext,
+                                DRIVER_STOP_REQUEST, driverStopIntent,
+                                PendingIntent.FLAG_UPDATE_CURRENT);
+
+                        mAlarmManager.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis()
+                                + DELAYED_DRIVER_STOP_MS, mDriverStopIntent);
                     }
                     break;
                 case CMD_START_DRIVER:
                     if (mInDelayedStop) {
                         mInDelayedStop = false;
                         mDelayedStopCounter++;
+                        mAlarmManager.cancel(mDriverStopIntent);
                         if (DBG) log("Delayed stop ignored due to start");
                     }
                     break;
                 case CMD_DELAYED_STOP_DRIVER:
+                    if (DBG) log("delayed stop " + message.arg1 + " " + mDelayedStopCounter);
                     if (message.arg1 != mDelayedStopCounter) break;
                     if (getCurrentState() != mDisconnectedState) {
                         WifiNative.disconnectCommand();
@@ -2626,8 +2647,8 @@ public class WifiStateMachine extends StateMachine {
                     }
                     mWakeLock.acquire();
                     WifiNative.stopDriverCommand();
-                    mWakeLock.release();
                     transitionTo(mDriverStoppingState);
+                    mWakeLock.release();
                     break;
                 case CMD_START_PACKET_FILTERING:
                     if (message.arg1 == MULTICAST_V6) {

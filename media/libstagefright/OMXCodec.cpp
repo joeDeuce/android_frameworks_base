@@ -308,6 +308,7 @@ static const CodecInfo kEncoderInfo[] = {
     { MEDIA_MIMETYPE_VIDEO_AVC, "OMX.TI.DUCATI1.VIDEO.H264E" },
     { MEDIA_MIMETYPE_VIDEO_AVC, "OMX.qcom.7x30.video.encoder.avc" },
     { MEDIA_MIMETYPE_VIDEO_AVC, "OMX.qcom.video.encoder.avc" },
+    { MEDIA_MIMETYPE_VIDEO_AVC, "OMX.ittiam.video.encoder.avc" },
     { MEDIA_MIMETYPE_VIDEO_AVC, "OMX.TI.Video.encoder" },
     { MEDIA_MIMETYPE_VIDEO_AVC, "OMX.Nvidia.h264.encoder" },
     { MEDIA_MIMETYPE_VIDEO_AVC, "OMX.SEC.AVC.Encoder" },
@@ -350,8 +351,8 @@ private:
 };
 
 char *HwAacRoles[]={
-"OMX.qcom.audio.decoder.multiaac",
-"OMX.qcom.audio.decoder.aac",
+(char *) "OMX.qcom.audio.decoder.multiaac",
+(char *) "OMX.qcom.audio.decoder.aac",
 };
 
 static const char *GetCodec(const CodecInfo *info, size_t numInfos,
@@ -519,6 +520,11 @@ uint32_t OMXCodec::getComponentQuirks(
        quirks |= kRequiresGlobalFlush;
     }
 
+    if (!strncmp(componentName, "OMX.ittiam.video.encoder.", 25)) {
+        quirks |= kRequiresAllocateBufferOnInputPorts;
+      //  quirks |= kRequiresAllocateBufferOnOutputPorts;
+        quirks |= kRequiresLoadedToIdleAfterAllocation;
+    }
 
     if (!strcmp(componentName, "OMX.qcom.audio.encoder.evrc")) {
         quirks |= kRequiresAllocateBufferOnInputPorts;
@@ -1140,7 +1146,10 @@ status_t OMXCodec::configureCodec(const sp<MetaData> &meta) {
         }
 
         if (mIsEncoder) {
-            setVideoInputFormat(mMIME, meta);
+            status_t err = setVideoInputFormat(mMIME, meta);
+            if (err != OK) {
+                return err;
+            }
         } else {
             int32_t width, height;
             bool success = meta->findInt32(kKeyWidth, &width);
@@ -1471,7 +1480,7 @@ status_t OMXCodec::isColorFormatSupported(
     return UNKNOWN_ERROR;
 }
 
-void OMXCodec::setVideoInputFormat(
+status_t OMXCodec::setVideoInputFormat(
         const char *mime, const sp<MetaData>& meta) {
 
     int32_t width, height, frameRate, bitRate, stride, sliceHeight;
@@ -1555,7 +1564,10 @@ void OMXCodec::setVideoInputFormat(
 
     err = mOMX->setParameter(
             mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
-    CHECK_EQ(err, (status_t)OK);
+    if(err != OK) {
+        LOGE("Setting Video InPort Definition failed");
+        return err;
+    }
 
     //////////////////////// Output port /////////////////////////
     CHECK_EQ(setVideoPortFormatType(
@@ -1583,7 +1595,10 @@ void OMXCodec::setVideoInputFormat(
 
     err = mOMX->setParameter(
             mNode, OMX_IndexParamPortDefinition, &def, sizeof(def));
-    CHECK_EQ(err, (status_t)OK);
+    if(err != OK) {
+        LOGE("Setting Video OutPort Definition failed");
+        return err;
+    }
 
     /////////////////// Codec-specific ////////////////////////
     switch (compressionFormat) {
@@ -1647,6 +1662,7 @@ void OMXCodec::setVideoInputFormat(
             LOGI("Enabled 3d");
 
     }
+    return OK;
 }
 
 static OMX_U32 setPFramesSpacing(int32_t iFramesInterval, int32_t frameRate) {
@@ -2079,7 +2095,7 @@ status_t OMXCodec::setVideoOutputFormat(
                || format.eColorFormat == OMX_COLOR_FormatCbYCrY
                || format.eColorFormat == OMX_TI_COLOR_FormatYUV420PackedSemiPlanar
                || format.eColorFormat == OMX_QCOM_COLOR_FormatYVU420SemiPlanar
-               || format.eColorFormat == QOMX_COLOR_FormatYVU420PackedSemiPlanar32m4ka
+               || format.eColorFormat == (OMX_COLOR_FORMATTYPE) QOMX_COLOR_FormatYVU420PackedSemiPlanar32m4ka
               || format.eColorFormat == QOMX_COLOR_FormatYUV420PackedSemiPlanar64x32Tile2m8ka);
 
         err = mOMX->setParameter(
@@ -2178,21 +2194,20 @@ OMXCodec::OMXCodec(
       mSeekMode(ReadOptions::SEEK_CLOSEST_SYNC),
       mTargetTimeUs(-1),
       mOutputPortSettingsChangedPending(false),
+      mThumbnailMode(false),
       mLeftOverBuffer(NULL),
       mPaused(false),
-      mIsAacFormatAdif(0),
-      mInterlaceFormatDetected(false),
-      mSPSParsed(false),
-      bInvalidState(false),
-      latenessUs(0),
-      mInterlaceFrame(0),
-      LC_level(0),
-      mThumbnailMode(false),
-      m3DVideoDetected(false),
       mNativeWindow(
               (!strncmp(componentName, "OMX.google.", 11)
               || !strcmp(componentName, "OMX.Nvidia.mpeg2v.decode"))
                         ? NULL : nativeWindow),
+      mInterlaceFormatDetected(false),
+      mSPSParsed(false),
+      bInvalidState(false),
+      m3DVideoDetected(false),
+      mIsAacFormatAdif(0),
+      latenessUs(0),
+      LC_level(0),
       mNumBFrames(0),
       mUseArbitraryMode(true),
       mDeferReason(0) {
@@ -2592,10 +2607,10 @@ status_t OMXCodec::allocateOutputBuffersFromNativeWindow() {
 
     int format = (def.format.video.eColorFormat ==
                   QOMX_COLOR_FormatYUV420PackedSemiPlanar64x32Tile2m8ka)?
-                 HAL_PIXEL_FORMAT_YCbCr_420_SP_TILED : def.format.video.eColorFormat;
+                 (int) HAL_PIXEL_FORMAT_YCbCr_420_SP_TILED : def.format.video.eColorFormat;
     if(def.format.video.eColorFormat == OMX_QCOM_COLOR_FormatYVU420SemiPlanar)
         format = HAL_PIXEL_FORMAT_YCrCb_420_SP;
-    if(def.format.video.eColorFormat == QOMX_COLOR_FormatYVU420PackedSemiPlanar32m4ka)
+    if(def.format.video.eColorFormat == (OMX_COLOR_FORMATTYPE) QOMX_COLOR_FormatYVU420PackedSemiPlanar32m4ka)
         format = HAL_PIXEL_FORMAT_YCrCb_420_SP_ADRENO;
 
     format ^= (mInterlaceFormatDetected ? HAL_PIXEL_FORMAT_INTERLACE : 0);
@@ -3340,7 +3355,7 @@ void OMXCodec::onEvent(OMX_EVENTTYPE event, OMX_U32 data1, OMX_U32 data2) {
         case OMX_EventError:
         {
             CODEC_LOGE("ERROR(0x%08lx, %ld)", data1, data2);
-            if (data1 == OMX_ErrorInvalidState) {
+            if (data1 == (OMX_U32) OMX_ErrorInvalidState) {
                 bInvalidState = true;
                 mPortStatus[kPortIndexInput] = SHUTTING_DOWN;
                 mPortStatus[kPortIndexOutput] = SHUTTING_DOWN;
@@ -3571,7 +3586,7 @@ void OMXCodec::onCmdComplete(OMX_COMMANDTYPE cmd, OMX_U32 data) {
 
             CODEC_LOGV("FLUSH_DONE(%ld)", portIndex);
 
-            if (portIndex == -1) {
+            if (portIndex == (OMX_U32) -1) {
                 CHECK_EQ((int)mPortStatus[kPortIndexInput], (int)SHUTTING_DOWN);
                 mPortStatus[kPortIndexInput] = ENABLED;
 
@@ -3896,7 +3911,7 @@ bool OMXCodec::flushPortAsync(OMX_U32 portIndex) {
     CHECK(mState == EXECUTING || mState == RECONFIGURING
             || mState == EXECUTING_TO_IDLE || mState == FLUSHING);
 
-    if ( portIndex == -1 ) {
+    if (portIndex == (OMX_U32) -1 ) {
         mPortStatus[kPortIndexInput] = SHUTTING_DOWN;
         mPortStatus[kPortIndexOutput] = SHUTTING_DOWN;
     } else {
@@ -4011,7 +4026,7 @@ void OMXCodec::drainInputBuffers() {
             }
 
             if (mFlags & kOnlySubmitOneInputBufferAtOneTime) {
-                if (i == mNumBFrames)
+                if (i == (size_t) mNumBFrames)
                 break;
             }
         }
@@ -5516,7 +5531,7 @@ static const char *colorFormatString(OMX_COLOR_FORMATTYPE type) {
         return "OMX_TI_COLOR_FormatYUV420PackedSemiPlanar";
     } else if (type == OMX_QCOM_COLOR_FormatYVU420SemiPlanar) {
         return "OMX_QCOM_COLOR_FormatYVU420SemiPlanar";
-    } else if (type == QOMX_COLOR_FormatYVU420PackedSemiPlanar32m4ka) {
+    } else if (type == (OMX_COLOR_FORMATTYPE) QOMX_COLOR_FormatYVU420PackedSemiPlanar32m4ka) {
         return "QOMX_COLOR_FormatYVU420PackedSemiPlanar32m4ka";
     } else if (type == QOMX_COLOR_FormatYUV420PackedSemiPlanar64x32Tile2m8ka) {
         return "QOMX_COLOR_FormatYUV420PackedSemiPlanar64x32Tile2m8ka";

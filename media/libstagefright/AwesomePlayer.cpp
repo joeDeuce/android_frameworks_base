@@ -192,8 +192,8 @@ AwesomePlayer::AwesomePlayer()
       mUIDValid(false),
       mTimeSource(NULL),
       mVideoRendererIsPreview(false),
-      mAudioPlayer(NULL),
       mAudioEOD(false),
+      mAudioPlayer(NULL),
       mDisplayWidth(0),
       mDisplayHeight(0),
       mFlags(0),
@@ -496,11 +496,11 @@ status_t AwesomePlayer::setDataSource_l(const sp<MediaExtractor> &extractor) {
 }
 
 void AwesomePlayer::reset() {
+    Mutex::Autolock autoLock(mLock);
     //Disconnect datasource
     if (mConnectingDataSource != NULL) {
         mConnectingDataSource->disconnect();
     }
-    Mutex::Autolock autoLock(mLock);
     reset_l();
 }
 
@@ -976,7 +976,7 @@ status_t AwesomePlayer::play_l() {
                     }
                 }
                 if(mAudioPlayer == NULL) {
-                    LOGE("AudioPlayer created, Non-LPA mode mime %s duration %d\n", mime, durationUs);
+                    LOGE("AudioPlayer created, Non-LPA mode mime %s duration %lld\n", mime, durationUs);
                     mAudioPlayer = new AudioPlayer(mAudioSink, this);
                 }
 
@@ -1529,11 +1529,11 @@ status_t AwesomePlayer::initAudioDecoder() {
             if ( (durationUs > 60000000) && !isFormatAdif && LPAPlayer::objectsAlive == 0) {
                 if(!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_MPEG)) {
                     LOGV("matchComponentName is set to MP3Decoder");
-                    matchComponentName= "MP3Decoder";
+                    matchComponentName = (char *) "MP3Decoder";
                 }
                 if(!strcasecmp(mime, MEDIA_MIMETYPE_AUDIO_AAC)) {
                     LOGV("matchComponentName is set to AACDecoder");
-                    matchComponentName= "AACDecoder";
+                    matchComponentName = (char *) "AACDecoder";
                 }
             }
         }
