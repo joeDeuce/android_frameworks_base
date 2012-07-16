@@ -43,9 +43,16 @@ import android.os.PowerManager;
  */
 public class HTML5VideoInline extends HTML5VideoView{
 
-    private SurfaceTexture mSurfaceTexture;
-    // m_textureNames is the texture bound with this SurfaceTexture.
-    private int[] mTextureNames;
+    // Due to the fact that the decoder consume a lot of memory, we make the
+    // surface texture as singleton. But the GL texture (m_textureNames)
+    // associated with the surface texture can be used for showing the screen
+    // shot when paused, so they are not singleton.
+    private static SurfaceTexture mSurfaceTexture = null;
+    private static int[] mTextureNames = null;
+    // Every time when the VideoLayer Id change, we need to recreate the
+    // SurfaceTexture in order to delete the old video's decoder memory.
+    private static int mVideoLayerUsingSurfaceTexture = -1;
+
     // Video control FUNCTIONS:
     @Override
     public void start() {
@@ -54,9 +61,8 @@ public class HTML5VideoInline extends HTML5VideoView{
         }
     }
 
-    HTML5VideoInline(int videoLayerId, int position,
-            boolean autoStart) {
-        init(videoLayerId, position, autoStart);
+    HTML5VideoInline(int videoLayerId, int position) {
+        init(videoLayerId, position, false);
     }
 
     @Override
@@ -89,19 +95,35 @@ public class HTML5VideoInline extends HTML5VideoView{
 
     // Inline Video specific FUNCTIONS:
 
-    @Override
-    public SurfaceTexture getSurfaceTexture(int videoLayerId) {
+    public static SurfaceTexture getSurfaceTexture(int videoLayerId) {
         // Create the surface texture.
-        if (mSurfaceTexture == null) {
-            if (mTextureNames == null) {
-                mTextureNames = new int[1];
-                GLES20.glGenTextures(1, mTextureNames, 0);
-            }
+        if (videoLayerId != mVideoLayerUsingSurfaceTexture
+            || mSurfaceTexture == null
+            || mTextureNames == null) {
+            // The GL texture will store in the VideoLayerManager at native side.
+            // They will be clean up when requested.
+            // The reason we recreated GL texture name is for screen shot support.
             mTextureNames = new int[1];
             GLES20.glGenTextures(1, mTextureNames, 0);
             mSurfaceTexture = new SurfaceTexture(mTextureNames[0]);
         }
         return mSurfaceTexture;
+    }
+
+    public boolean surfaceTextureDeleted() {
+        return (mSurfaceTexture == null);
+    }
+
+    @Override
+    public void deleteSurfaceTexture() {
+        cleanupSurfaceTexture();
+        return;
+    }
+
+    public static void cleanupSurfaceTexture() {
+        mSurfaceTexture = null;
+        mVideoLayerUsingSurfaceTexture = -1;
+        return;
     }
 
     @Override

@@ -242,6 +242,7 @@ public class DrmManagerClient {
     public DrmManagerClient(Context context) {
         mContext = context;
         mReleased = false;
+        createEventThreads();
 
         // save the unique id
         mUniqueId = _initialize();
@@ -363,6 +364,7 @@ public class DrmManagerClient {
      *
      * @return A {@link android.content.ContentValues} instance that contains
      * key-value pairs representing the constraints. Null in case of failure.
+     * The keys are defined in {@link DrmStore.ConstraintsColumns}.
      */
     public ContentValues getConstraints(String path, int action) {
         if (null == path || path.equals("") || !DrmStore.Action.isValid(action)) {
@@ -877,5 +879,21 @@ public class DrmManagerClient {
     private native DrmConvertedStatus _closeConvertSession(int uniqueId, int convertId);
 
     private native DrmSupportInfo[] _getAllSupportInfo(int uniqueId);
+
+    private void createEventThreads() {
+        if (mEventHandler == null && mInfoHandler == null) {
+            mInfoThread = new HandlerThread("DrmManagerClient.InfoHandler");
+            mInfoThread.start();
+            mInfoHandler = new InfoHandler(mInfoThread.getLooper());
+
+            mEventThread = new HandlerThread("DrmManagerClient.EventHandler");
+            mEventThread.start();
+            mEventHandler = new EventHandler(mEventThread.getLooper());
+        }
+    }
+
+    private void createListeners() {
+        _setListeners(mUniqueId, new WeakReference<DrmManagerClient>(this));
+    }
 }
 

@@ -120,7 +120,7 @@
     </string>
 
     <!-- Separator for PLMN and SPN in network name. -->
-    <string name="status_bar_network_name_separator" translatable="false">"\n"</string>
+    <string name="status_bar_network_name_separator" translatable="false">|</string>
 
     <!-- Network connection string for Bluetooth Reverse Tethering -->
     <string name="bluetooth_tethered">Bluetooth tethered</string>
@@ -128,7 +128,7 @@
     <string name="status_bar_input_method_settings_configure_input_methods">Set up input methods</string>
 
     <!-- Label of a toggle switch to disable use of the physical keyboard in favor of the IME. [CHAR LIMIT=25] -->
-    <string name="status_bar_use_physical_keyboard">Use physical keyboard</string>
+    <string name="status_bar_use_physical_keyboard">Physical keyboard</string>
 
     <!-- Prompt for the USB device permission dialog [CHAR LIMIT=80] -->
     <string name="usb_device_permission_prompt">Allow the app <xliff:g id="application">%1$s</xliff:g> to access the USB device?</string>
@@ -366,39 +366,26 @@
     <!-- Content description of the clear button in the notification panel for accessibility (not shown on the screen). [CHAR LIMIT=NONE] -->
     <string name="accessibility_clear_all">Clear all notifications.</string>
 
-    <!-- for Sense 4.0 style multitasking mod -->
-    <string name="recent_apps_title">Recent apps</string>
-    <string name="recents_kill_all_button_text">Kill all </string>
+    <!-- Description of the desk dock action that invokes the Android Dreams screen saver feature -->
+    <string name="dreams_dock_launcher">Activate screen saver</string>
 
-    <string name="battery_test">99</string>
-    <string name="status_bar_settings_gps_button">GPS</string>
-    <string name="toggle_bt">BT</string>
-    <string name="toggle_data">Data</string>
-    <string name="toggle_lte">LTE</string>
-    <string name="toggle_rotate">Rotate</string>
-    <string name="toggle_wifi">Wi-Fi</string>
-    <string name="toggle_gps">GPS</string>
-    <string name="toggle_2g">2G</string>
-    <string name="toggle_wifiap">Wi-Fi AP</string>
-    <string name="toggle_airplane">Airplane</string>
-    <string name="toggle_vibrate">Vibrate</string>
-    <string name="toggle_silent">Silent</string>
-    <string name="toggle_torch">Torch</string>
-    <string name="toggle_sync">Sync</string>
-    <string name="toggle_fcharge">FastChrg</string>
-    <string name="toggle_bln">BLN</string>
-    <string name="toggle_tether">Tether</string>
+    <!-- Title shown in notification popup for inspecting the responsible
+         application -->
+    <string name="status_bar_notification_inspect_item_title">App info</string>
 
-    <string name="status_bar_settings_toggles">Toggles</string>
-    <string name="weatherpanel_slash">/</string>
-    
-	<!-- Title for the pseudo-notification shown when notifications are disabled (do-not-disturb
+    <!-- Title for the pseudo-notification shown when notifications are disabled (do-not-disturb
          mode) -->
     <string name="notifications_off_title">Notifications off</string>
 
     <!-- Content text for do-not-disturb mode notification -->
     <string name="notifications_off_text">Tap here to turn notifications back on.</string>
 
-    <!-- for weather last updated mod -->
-    <string name="weather_last_updated">Updated</string>
+    <!-- Description of the button in the phone-style notification panel that controls auto-rotation, when auto-rotation is on. [CHAR LIMIT=NONE] -->
+    <string name="accessibility_rotation_lock_off">Screen will rotate automatically.</string>
+
+    <!-- Description of the button in the phone-style notification panel that controls auto-rotation, when auto-rotation is off. [CHAR LIMIT=NONE] -->
+    <string name="accessibility_rotation_lock_on_landscape">Screen is locked in landscape orientation.</string>
+
+    <!-- Description of the button in the phone-style notification panel that controls auto-rotation, when auto-rotation is off. [CHAR LIMIT=NONE] -->
+    <string name="accessibility_rotation_lock_on_portrait">Screen is locked in portrait orientation.</string>
 </resources>

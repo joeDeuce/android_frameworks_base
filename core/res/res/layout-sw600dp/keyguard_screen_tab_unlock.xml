@@ -39,11 +39,11 @@
 		android:id="@+id/root">
     
     <!-- top: status -->
-		<RelativeLayout
-			android:layout_height="0dip"
-			android:layout_weight="1"
-			android:layout_width="match_parent"
-			android:gravity="center">
+    <RelativeLayout
+        android:layout_height="0dip"
+        android:layout_weight="0.42"
+        android:layout_width="match_parent"
+        android:gravity="center">
 
 			<RelativeLayout
 				android:id="@+id/transport_bg_protect"
@@ -51,38 +51,37 @@
 				android:layout_height="wrap_content"
 				android:gravity="center">
 
-				<include
-					layout="@layout/keyguard_screen_status_port"
-					android:layout_width="wrap_content"
-					android:layout_height="wrap_content"
-					android:layout_marginLeft="50dip"
-					android:layout_marginTop="50dip"
-					android:layout_marginBottom="100dip"
-					android:layout_marginRight="64dip"
-					android:layout_alignParentTop="true"
-					android:layout_alignParentLeft="true" />
+            <!-- Status -->
+            <include layout="@layout/keyguard_screen_status_port"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginLeft="50dip"
+                android:layout_marginTop="50dip"
+                android:layout_alignParentTop="true"
+                android:layout_alignParentLeft="true"/>
 
-                <!-- Music transport control -->
-				<include
-					android:id="@+id/transport"
-					layout="@layout/keyguard_transport_control"
-					android:layout_row="0"
-					android:layout_column="0"
-					android:layout_rowSpan="3"
-					android:layout_columnSpan="1"
-					android:layout_gravity="fill"
-					android:layout_width="match_parent"
-					android:layout_height="512dip" />
+            <!-- Music transport control -->
+            <include android:id="@+id/transport"
+                layout="@layout/keyguard_transport_control"
+                android:layout_row="0"
+                android:layout_column="0"
+                android:layout_rowSpan="3"
+                android:layout_columnSpan="1"
+                android:layout_gravity="fill"
+                android:layout_width="match_parent"
+                android:layout_height="512dip"
+                />
 
-			</RelativeLayout>
+        </RelativeLayout>
 
 		</RelativeLayout>
 
-		<LinearLayout
-			android:layout_width="match_parent"
-			android:layout_height="0dip"
-			android:layout_weight="1"
-			android:orientation="vertical">
+    <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dip"
+            android:layout_weight="0.58"
+            android:orientation="vertical"
+            android:gravity="bottom">
 
 			<TextView
 				android:id="@+id/screenLocked"
@@ -93,27 +92,28 @@
 				android:layout_marginTop="12dip"
 				android:drawablePadding="4dip" />
 
-			<com.android.internal.widget.multiwaveview.MultiWaveView
-				android:id="@+id/unlock_widget"
-				android:orientation="horizontal"
-				android:layout_width="match_parent"
-				android:layout_height="match_parent"
-				android:layout_alignParentBottom="true"
-				android:layout_gravity="center"
+        <com.android.internal.widget.multiwaveview.GlowPadView
+            android:id="@+id/unlock_widget"
+            android:orientation="horizontal"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:gravity="center"
+            android:focusable="true"
 
-				android:targetDrawables="@array/lockscreen_targets_with_camera"
-				android:targetDescriptions="@array/lockscreen_target_descriptions_with_camera"
-				android:directionDescriptions="@array/lockscreen_direction_descriptions"
-				android:handleDrawable="@drawable/ic_lockscreen_handle"
-				android:waveDrawable="@drawable/ic_lockscreen_outerring"
-				android:outerRadius="@dimen/multiwaveview_target_placement_radius"
-				android:snapMargin="@dimen/multiwaveview_snap_margin"
-				android:hitRadius="@dimen/multiwaveview_hit_radius"
-				android:rightChevronDrawable="@drawable/ic_lockscreen_chevron_right"
-				android:horizontalOffset="0dip"
-				android:verticalOffset="0dip"
-				android:feedbackCount="3"
-				android:vibrationDuration="20" />
+            android:targetDrawables="@array/lockscreen_targets_with_camera"
+            android:targetDescriptions="@array/lockscreen_target_descriptions_with_camera"
+            android:directionDescriptions="@array/lockscreen_direction_descriptions"
+            android:handleDrawable="@drawable/ic_lockscreen_handle"
+            android:outerRingDrawable="@drawable/ic_lockscreen_outerring"
+            android:outerRadius="@dimen/glowpadview_target_placement_radius"
+            android:innerRadius="@dimen/glowpadview_inner_radius"
+            android:snapMargin="@dimen/glowpadview_snap_margin"
+            android:feedbackCount="1"
+            android:vibrationDuration="20"
+            android:glowRadius="@dimen/glowpadview_glow_radius"
+            android:pointDrawable="@drawable/ic_lockscreen_glowdot"
+            />
 
         <!-- emergency call button shown when sim is PUKd and tab_selector is hidden -->
 			<Button

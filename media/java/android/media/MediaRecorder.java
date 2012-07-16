@@ -131,9 +131,15 @@ public class MediaRecorder
     /**
      * Sets a Surface to show a preview of recorded media (video). Calls this
      * before prepare() to make sure that the desirable preview display is
-     * set.
+     * set. If {@link #setCamera(Camera)} is used and the surface has been
+     * already set to the camera, application do not need to call this. If
+     * this is called with non-null surface, the preview surface of the camera
+     * will be replaced by the new surface. If this method is called with null
+     * surface or not called at all, media recorder will not change the preview
+     * surface of the camera.
      *
      * @param sv the Surface to use for the preview
+     * @see android.hardware.Camera#setPreviewDisplay(android.view.SurfaceHolder)
      */
     public void setPreviewDisplay(Surface sv) {
         mSurface = sv;
@@ -145,10 +151,13 @@ public class MediaRecorder
      */
     public final class AudioSource {
       /* Do not change these values without updating their counterparts
-       * in include/media/mediarecorder.h!
+       * in system/core/include/system/audio.h!
        */
         private AudioSource() {}
+
+        /** Default audio source **/
         public static final int DEFAULT = 0;
+
         /** Microphone audio source */
         public static final int MIC = 1;
 
@@ -208,18 +217,24 @@ public class MediaRecorder
         /** MPEG4 media file format*/
         public static final int MPEG_4 = 2;
 
-        /** The following formats are audio only .aac or .amr formats **/
-        /** @deprecated  Deprecated in favor of AMR_NB */
-        /** Deprecated in favor of MediaRecorder.OutputFormat.AMR_NB */
-        /** AMR NB file format */
+        /** The following formats are audio only .aac or .amr formats */
+
+        /**
+         * AMR NB file format
+         * @deprecated  Deprecated in favor of MediaRecorder.OutputFormat.AMR_NB
+         */
         public static final int RAW_AMR = 3;
+
         /** AMR NB file format */
         public static final int AMR_NB = 3;
+
         /** AMR WB file format */
         public static final int AMR_WB = 4;
+
         /** @hide AAC ADIF file format */
         public static final int AAC_ADIF = 5;
-        /** @hide AAC ADTS file format */
+
+        /** AAC ADTS file format */
         public static final int AAC_ADTS = 6;
 
         /** @hide Stream over a socket, limited to a single stream */
@@ -248,16 +263,12 @@ public class MediaRecorder
         public static final int AMR_NB = 1;
         /** AMR (Wideband) audio codec */
         public static final int AMR_WB = 2;
-        /** AAC audio codec */
+        /** AAC Low Complexity (AAC-LC) audio codec */
         public static final int AAC = 3;
-        /** enhanced AAC audio codec */
-        public static final int AAC_PLUS = 4;
-        /** enhanced AAC plus audio codec */
-        public static final int EAAC_PLUS = 5;
-        /** EVRC audio codec */
-        public static final int EVRC = 6;
-        /** QCELP audio codec */
-        public static final int QCELP =7;
+        /** High Efficiency AAC (HE-AAC) audio codec */
+        public static final int HE_AAC = 4;
+        /** Enhanced Low Delay AAC (AAC-ELD) audio codec */
+        public static final int AAC_ELD = 5;
     }
 
     /**
@@ -310,6 +321,8 @@ public class MediaRecorder
     /**
      * Uses the settings from a CamcorderProfile object for recording. This method should
      * be called after the video AND audio sources are set, and before setOutputFile().
+     * If a time lapse CamcorderProfile is used, audio related source or recording
+     * parameters are ignored.
      *
      * @param profile the CamcorderProfile to use
      * @see android.media.CamcorderProfile
@@ -322,8 +335,8 @@ public class MediaRecorder
         setVideoEncoder(profile.videoCodec);
         if (profile.quality >= CamcorderProfile.QUALITY_TIME_LAPSE_LOW &&
              profile.quality <= CamcorderProfile.QUALITY_TIME_LAPSE_QVGA) {
-            // Enable time lapse. Also don't set audio for time lapse.
-            setParameter(String.format("time-lapse-enable=1"));
+            // Nothing needs to be done. Call to setCaptureRate() enables
+            // time lapse video recording.
         } else {
             setAudioEncodingBitRate(profile.audioBitRate);
             setAudioChannels(profile.audioChannels);
@@ -334,7 +347,10 @@ public class MediaRecorder
 
     /**
      * Set video frame capture rate. This can be used to set a different video frame capture
-     * rate than the recorded video's playback rate. Currently this works only for time lapse mode.
+     * rate than the recorded video's playback rate. This method also sets the recording mode
+     * to time lapse. In time lapse video recording, only video is recorded. Audio related
+     * parameters are ignored when a time lapse recording session starts, if an application
+     * sets them.
      *
      * @param fps Rate at which frames should be captured in frames per second.
      * The fps can go as low as desired. However the fastest fps will be limited by the hardware.
@@ -346,6 +362,9 @@ public class MediaRecorder
      * possible.
      */
     public void setCaptureRate(double fps) {
+        // Make sure that time lapse is enabled when this method is called.
+        setParameter(String.format("time-lapse-enable=1"));
+
         double timeBetweenFrameCapture = 1 / fps;
         int timeBetweenFrameCaptureMs = (int) (1000 * timeBetweenFrameCapture);
         setParameter(String.format("time-between-time-lapse-frame-capture=%d",
@@ -581,6 +600,7 @@ public class MediaRecorder
      * Currently not implemented. It does nothing.
      * @deprecated Time lapse mode video recording using camera still image capture
      * is not desirable, and will not be supported.
+     * @hide
      */
     public void setAuxiliaryOutputFile(FileDescriptor fd)
     {
@@ -591,6 +611,7 @@ public class MediaRecorder
      * Currently not implemented. It does nothing.
      * @deprecated Time lapse mode video recording using camera still image capture
      * is not desirable, and will not be supported.
+     * @hide
      */
     public void setAuxiliaryOutputFile(String path)
     {

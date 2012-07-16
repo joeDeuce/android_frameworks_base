@@ -13,6 +13,7 @@ endif
 
 LOCAL_SHARED_LIBRARIES := \
 	libcutils \
+	libandroidfw \
 	libutils \
 	libbinder \
     libui \

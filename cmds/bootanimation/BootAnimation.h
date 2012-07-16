@@ -20,11 +20,8 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#include <androidfw/AssetManager.h>
 #include <utils/threads.h>
-#include <utils/AssetManager.h>
-
-#include <surfaceflinger/ISurfaceComposer.h>
-#include <surfaceflinger/SurfaceComposerClient.h>
 
 #include <media/mediaplayer.h>
 
@@ -35,7 +32,9 @@ class SkBitmap;
 
 namespace android {
 
-class AssetManager;
+class Surface;
+class SurfaceComposerClient;
+class SurfaceControl;
 
 // ---------------------------------------------------------------------------
 
@@ -74,6 +73,7 @@ private:
             int pause;
             String8 path;
             SortedVector<Frame> frames;
+            bool playUntilComplete;
         };
         int fps;
         int width;
@@ -85,6 +85,8 @@ private:
     status_t initTexture(void* buffer, size_t len);
     bool android();
     bool movie();
+
+    void checkExit();
 
     sp<SurfaceComposerClient>       mSession;
     AssetManager mAssets;

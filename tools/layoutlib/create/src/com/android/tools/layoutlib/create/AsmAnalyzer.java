@@ -23,6 +23,7 @@ import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.signature.SignatureReader;
 import org.objectweb.asm.signature.SignatureVisitor;
@@ -32,8 +33,8 @@ import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 import java.util.Map.Entry;
+import java.util.TreeMap;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -81,6 +82,9 @@ public class AsmAnalyzer {
      * Fills the generator with classes & dependencies found.
      */
     public void analyze() throws IOException, LogAbortException {
+
+        AsmAnalyzer visitor = this;
+
         Map<String, ClassReader> zipClasses = parseZip(mOsSourceJar);
         mLog.info("Found %d classes in input JAR%s.", zipClasses.size(),
                 mOsSourceJar.size() > 1 ? "s" : "");
@@ -311,8 +315,7 @@ public class AsmAnalyzer {
     /**
      * Visitor to collect all the type dependencies from a class.
      */
-    public class DependencyVisitor
-        implements ClassVisitor, FieldVisitor, MethodVisitor, SignatureVisitor, AnnotationVisitor {
+    public class DependencyVisitor extends ClassVisitor {
 
         /** All classes found in the source JAR. */
         private final Map<String, ClassReader> mZipClasses;
@@ -340,6 +343,7 @@ public class AsmAnalyzer {
                 Map<String, ClassReader> outKeep,
                 Map<String,ClassReader> inDeps,
                 Map<String,ClassReader> outDeps) {
+            super(Opcodes.ASM4);
             mZipClasses = zipClasses;
             mInKeep = inKeep;
             mOutKeep = outKeep;
@@ -412,7 +416,7 @@ public class AsmAnalyzer {
                 SignatureReader sr = new SignatureReader(signature);
                 // SignatureReader.accept will call accessType so we don't really have
                 // to differentiate where the signature comes from.
-                sr.accept(this);
+                sr.accept(new MySignatureVisitor());
             }
         }
 
@@ -452,6 +456,7 @@ public class AsmAnalyzer {
         // ---------------------------------------------------
 
         // Visits a class header
+        @Override
         public void visit(int version, int access, String name,
                 String signature, String superName, String[] interfaces) {
             // signature is the signature of this class. May be null if the class is not a generic
@@ -470,21 +475,51 @@ public class AsmAnalyzer {
             considerNames(interfaces);
         }
 
+
+        @Override
         public AnnotationVisitor visitAnnotation(String desc, boolean visible) {
             // desc is the class descriptor of the annotation class.
             considerDesc(desc);
-            return this; // return this to visit annotion values
+            return new MyAnnotationVisitor();
         }
 
+        @Override
         public void visitAttribute(Attribute attr) {
             // pass
         }
 
         // Visits the end of a class
+        @Override
         public void visitEnd() {
             // pass
         }
 
+        private class MyFieldVisitor extends FieldVisitor {
+
+            public MyFieldVisitor() {
+                super(Opcodes.ASM4);
+            }
+
+            @Override
+            public AnnotationVisitor visitAnnotation(String desc, boolean visible) {
+                // desc is the class descriptor of the annotation class.
+                considerDesc(desc);
+                return new MyAnnotationVisitor();
+            }
+
+            @Override
+            public void visitAttribute(Attribute attr) {
+                // pass
+            }
+
+            // Visits the end of a class
+            @Override
+            public void visitEnd() {
+                // pass
+            }
+        }
+
+        @Override
         public FieldVisitor visitField(int access, String name, String desc,
                 String signature, Object value) {
             // desc is the field's descriptor (see Type).
@@ -494,14 +529,16 @@ public class AsmAnalyzer {
             // generic types.
             considerSignature(signature);
 
-            return this; // a visitor to visit field annotations and attributes
+            return new MyFieldVisitor();
         }
 
+        @Override
         public void visitInnerClass(String name, String outerName, String innerName, int access) {
             // name is the internal name of an inner class (see getInternalName).
             considerName(name);
         }
 
+        @Override
         public MethodVisitor visitMethod(int access, String name, String desc,
                 String signature, String[] exceptions) {
             // desc is the method's descriptor (see Type).
@@ -510,13 +547,15 @@ public class AsmAnalyzer {
             // type and exceptions do not use generic types.
             considerSignature(signature);
 
-            return this; // returns this to visit the method
+            return new MyMethodVisitor();
         }
 
+        @Override
         public void visitOuterClass(String owner, String name, String desc) {
             // pass
         }
 
+        @Override
         public void visitSource(String source, String debug) {
             // pass
         }
@@ -526,191 +565,240 @@ public class AsmAnalyzer {
         // --- MethodVisitor
         // ---------------------------------------------------
 
-        public AnnotationVisitor visitAnnotationDefault() {
-            return this; // returns this to visit the default value
-        }
+        private class MyMethodVisitor extends MethodVisitor {
+
+            public MyMethodVisitor() {
+                super(Opcodes.ASM4);
+            }
 
 
-        public void visitCode() {
-            // pass
-        }
+            @Override
+            public AnnotationVisitor visitAnnotationDefault() {
+                return new MyAnnotationVisitor();
+            }
 
-        // field instruction
-        public void visitFieldInsn(int opcode, String owner, String name, String desc) {
-            // name is the field's name.
-            considerName(name);
-            // desc is the field's descriptor (see Type).
-            considerDesc(desc);
-        }
+            @Override
+            public void visitCode() {
+                // pass
+            }
 
-        public void visitFrame(int type, int local, Object[] local2, int stack, Object[] stack2) {
-            // pass
-        }
+            // field instruction
+            @Override
+            public void visitFieldInsn(int opcode, String owner, String name, String desc) {
+                // name is the field's name.
+                considerName(name);
+                // desc is the field's descriptor (see Type).
+                considerDesc(desc);
+            }
 
-        public void visitIincInsn(int var, int increment) {
-            // pass -- an IINC instruction
-        }
+            @Override
+            public void visitFrame(int type, int local, Object[] local2, int stack, Object[] stack2) {
+                // pass
+            }
 
-        public void visitInsn(int opcode) {
-            // pass -- a zero operand instruction
-        }
+            @Override
+            public void visitIincInsn(int var, int increment) {
+                // pass -- an IINC instruction
+            }
 
-        public void visitIntInsn(int opcode, int operand) {
-            // pass -- a single int operand instruction
-        }
+            @Override
+            public void visitInsn(int opcode) {
+                // pass -- a zero operand instruction
+            }
 
-        public void visitJumpInsn(int opcode, Label label) {
-            // pass -- a jump instruction
-        }
+            @Override
+            public void visitIntInsn(int opcode, int operand) {
+                // pass -- a single int operand instruction
+            }
 
-        public void visitLabel(Label label) {
-            // pass -- a label target
-        }
+            @Override
+            public void visitJumpInsn(int opcode, Label label) {
+                // pass -- a jump instruction
+            }
 
-        // instruction to load a constant from the stack
-        public void visitLdcInsn(Object cst) {
-            if (cst instanceof Type) {
-                considerType((Type) cst);
+            @Override
+            public void visitLabel(Label label) {
+                // pass -- a label target
+            }
+
+            // instruction to load a constant from the stack
+            @Override
+            public void visitLdcInsn(Object cst) {
+                if (cst instanceof Type) {
+                    considerType((Type) cst);
+                }
+            }
+
+            @Override
+            public void visitLineNumber(int line, Label start) {
+                // pass
+            }
+
+            @Override
+            public void visitLocalVariable(String name, String desc,
+                    String signature, Label start, Label end, int index) {
+                // desc is the type descriptor of this local variable.
+                considerDesc(desc);
+                // signature is the type signature of this local variable. May be null if the local
+                // variable type does not use generic types.
+                considerSignature(signature);
+            }
+
+            @Override
+            public void visitLookupSwitchInsn(Label dflt, int[] keys, Label[] labels) {
+                // pass -- a lookup switch instruction
+            }
+
+            @Override
+            public void visitMaxs(int maxStack, int maxLocals) {
+                // pass
+            }
+
+            // instruction that invokes a method
+            @Override
+            public void visitMethodInsn(int opcode, String owner, String name, String desc) {
+
+                // owner is the internal name of the method's owner class
+                considerName(owner);
+                // desc is the method's descriptor (see Type).
+                considerDesc(desc);
+            }
+
+            // instruction multianewarray, whatever that is
+            @Override
+            public void visitMultiANewArrayInsn(String desc, int dims) {
+
+                // desc an array type descriptor.
+                considerDesc(desc);
+            }
+
+            @Override
+            public AnnotationVisitor visitParameterAnnotation(int parameter, String desc,
+                    boolean visible) {
+                // desc is the class descriptor of the annotation class.
+                considerDesc(desc);
+                return new MyAnnotationVisitor();
+            }
+
+            @Override
+            public void visitTableSwitchInsn(int min, int max, Label dflt, Label[] labels) {
+                // pass -- table switch instruction
+
+            }
+
+            @Override
+            public void visitTryCatchBlock(Label start, Label end, Label handler, String type) {
+                // type is the internal name of the type of exceptions handled by the handler,
+                // or null to catch any exceptions (for "finally" blocks).
+                considerName(type);
+            }
+
+            // type instruction
+            @Override
+            public void visitTypeInsn(int opcode, String type) {
+                // type is the operand of the instruction to be visited. This operand must be the
+                // internal name of an object or array class.
+                considerName(type);
+            }
+
+            @Override
+            public void visitVarInsn(int opcode, int var) {
+                // pass -- local variable instruction
             }
         }
 
-        public void visitLineNumber(int line, Label start) {
-            // pass
-        }
+        private class MySignatureVisitor extends SignatureVisitor {
 
-        public void visitLocalVariable(String name, String desc,
-                String signature, Label start, Label end, int index) {
-            // desc is the type descriptor of this local variable.
-            considerDesc(desc);
-            // signature is the type signature of this local variable. May be null if the local
-            // variable type does not use generic types.
-            considerSignature(signature);
-        }
-
-        public void visitLookupSwitchInsn(Label dflt, int[] keys, Label[] labels) {
-            // pass -- a lookup switch instruction
-        }
-
-        public void visitMaxs(int maxStack, int maxLocals) {
-            // pass
-        }
-
-        // instruction that invokes a method
-        public void visitMethodInsn(int opcode, String owner, String name, String desc) {
-
-            // owner is the internal name of the method's owner class
-            considerName(owner);
-            // desc is the method's descriptor (see Type).
-            considerDesc(desc);
-        }
-
-        // instruction multianewarray, whatever that is
-        public void visitMultiANewArrayInsn(String desc, int dims) {
-
-            // desc an array type descriptor.
-            considerDesc(desc);
-        }
-
-        public AnnotationVisitor visitParameterAnnotation(int parameter, String desc,
-                boolean visible) {
-            // desc is the class descriptor of the annotation class.
-            considerDesc(desc);
-            return this; // return this to visit annotation values
-        }
-
-        public void visitTableSwitchInsn(int min, int max, Label dflt, Label[] labels) {
-            // pass -- table switch instruction
-
-        }
-
-        public void visitTryCatchBlock(Label start, Label end, Label handler, String type) {
-            // type is the internal name of the type of exceptions handled by the handler,
-            // or null to catch any exceptions (for "finally" blocks).
-            considerName(type);
-        }
-
-        // type instruction
-        public void visitTypeInsn(int opcode, String type) {
-            // type is the operand of the instruction to be visited. This operand must be the
-            // internal name of an object or array class.
-            considerName(type);
-        }
-
-        public void visitVarInsn(int opcode, int var) {
-            // pass -- local variable instruction
-        }
-
-
-        // ---------------------------------------------------
-        // --- SignatureVisitor
-        // ---------------------------------------------------
-
-        private String mCurrentSignatureClass = null;
-
-        // Starts the visit of a signature corresponding to a class or interface type
-        public void visitClassType(String name) {
-            mCurrentSignatureClass = name;
-            considerName(name);
-        }
-
-        // Visits an inner class
-        public void visitInnerClassType(String name) {
-            if (mCurrentSignatureClass != null) {
-                mCurrentSignatureClass += "$" + name;
-                considerName(mCurrentSignatureClass);
+            public MySignatureVisitor() {
+                super(Opcodes.ASM4);
             }
-        }
 
-        public SignatureVisitor visitArrayType() {
-            return this; // returns this to visit the signature of the array element type
-        }
+            // ---------------------------------------------------
+            // --- SignatureVisitor
+            // ---------------------------------------------------
 
-        public void visitBaseType(char descriptor) {
-            // pass -- a primitive type, ignored
-        }
+            private String mCurrentSignatureClass = null;
 
-        public SignatureVisitor visitClassBound() {
-            return this; // returns this to visit the signature of the class bound
-        }
+            // Starts the visit of a signature corresponding to a class or interface type
+            @Override
+            public void visitClassType(String name) {
+                mCurrentSignatureClass = name;
+                considerName(name);
+            }
 
-        public SignatureVisitor visitExceptionType() {
-            return this; // return this to visit the signature of the exception type.
-        }
+            // Visits an inner class
+            @Override
+            public void visitInnerClassType(String name) {
+                if (mCurrentSignatureClass != null) {
+                    mCurrentSignatureClass += "$" + name;
+                    considerName(mCurrentSignatureClass);
+                }
+            }
 
-        public void visitFormalTypeParameter(String name) {
-            // pass
-        }
+            @Override
+            public SignatureVisitor visitArrayType() {
+                return new MySignatureVisitor();
+            }
 
-        public SignatureVisitor visitInterface() {
-            return this; // returns this to visit the signature of the interface type
-        }
+            @Override
+            public void visitBaseType(char descriptor) {
+                // pass -- a primitive type, ignored
+            }
 
-        public SignatureVisitor visitInterfaceBound() {
-            return this; // returns this to visit the signature of the interface bound
-        }
+            @Override
+            public SignatureVisitor visitClassBound() {
+                return new MySignatureVisitor();
+            }
 
-        public SignatureVisitor visitParameterType() {
-            return this; // returns this to visit the signature of the parameter type
-        }
+            @Override
+            public SignatureVisitor visitExceptionType() {
+                return new MySignatureVisitor();
+            }
 
-        public SignatureVisitor visitReturnType() {
-            return this; // returns this to visit the signature of the return type
-        }
+            @Override
+            public void visitFormalTypeParameter(String name) {
+                // pass
+            }
 
-        public SignatureVisitor visitSuperclass() {
-            return this; // returns this to visit the signature of the super class type
-        }
+            @Override
+            public SignatureVisitor visitInterface() {
+                return new MySignatureVisitor();
+            }
 
-        public SignatureVisitor visitTypeArgument(char wildcard) {
-            return this; // returns this to visit the signature of the type argument
-        }
+            @Override
+            public SignatureVisitor visitInterfaceBound() {
+                return new MySignatureVisitor();
+            }
 
-        public void visitTypeVariable(String name) {
-            // pass
-        }
+            @Override
+            public SignatureVisitor visitParameterType() {
+                return new MySignatureVisitor();
+            }
 
-        public void visitTypeArgument() {
-            // pass
+            @Override
+            public SignatureVisitor visitReturnType() {
+                return new MySignatureVisitor();
+            }
+
+            @Override
+            public SignatureVisitor visitSuperclass() {
+                return new MySignatureVisitor();
+            }
+
+            @Override
+            public SignatureVisitor visitTypeArgument(char wildcard) {
+                return new MySignatureVisitor();
+            }
+
+            @Override
+            public void visitTypeVariable(String name) {
+                // pass
+            }
+
+            @Override
+            public void visitTypeArgument() {
+                // pass
+            }
         }
 
 
@@ -718,30 +806,39 @@ public class AsmAnalyzer {
         // --- AnnotationVisitor
         // ---------------------------------------------------
 
+        private class MyAnnotationVisitor extends AnnotationVisitor {
 
-        // Visits a primitive value of an annotation
-        public void visit(String name, Object value) {
-            // value is the actual value, whose type must be Byte, Boolean, Character, Short,
-            // Integer, Long, Float, Double, String or Type
-            if (value instanceof Type) {
-                considerType((Type) value);
+            public MyAnnotationVisitor() {
+                super(Opcodes.ASM4);
+            }
+
+            // Visits a primitive value of an annotation
+            @Override
+            public void visit(String name, Object value) {
+                // value is the actual value, whose type must be Byte, Boolean, Character, Short,
+                // Integer, Long, Float, Double, String or Type
+                if (value instanceof Type) {
+                    considerType((Type) value);
+                }
+            }
+
+            @Override
+            public AnnotationVisitor visitAnnotation(String name, String desc) {
+                // desc is the class descriptor of the nested annotation class.
+                considerDesc(desc);
+                return new MyAnnotationVisitor();
+            }
+
+            @Override
+            public AnnotationVisitor visitArray(String name) {
+                return new MyAnnotationVisitor();
+            }
+
+            @Override
+            public void visitEnum(String name, String desc, String value) {
+                // desc is the class descriptor of the enumeration class.
+                considerDesc(desc);
             }
         }
-
-        public AnnotationVisitor visitAnnotation(String name, String desc) {
-            // desc is the class descriptor of the nested annotation class.
-            considerDesc(desc);
-            return this; // returns this to visit the actual nested annotation value
-        }
-
-        public AnnotationVisitor visitArray(String name) {
-            return this; // returns this to visit the actual array value elements
-        }
-
-        public void visitEnum(String name, String desc, String value) {
-            // desc is the class descriptor of the enumeration class.
-            considerDesc(desc);
-        }
-
     }
 }

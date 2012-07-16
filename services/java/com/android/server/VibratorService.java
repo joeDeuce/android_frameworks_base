@@ -21,6 +21,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.database.ContentObserver;
+import android.hardware.input.InputManager;
 import android.os.Handler;
 import android.os.IVibratorService;
 import android.os.PowerManager;
@@ -29,20 +31,41 @@ import android.os.RemoteException;
 import android.os.IBinder;
 import android.os.Binder;
 import android.os.SystemClock;
+import android.os.Vibrator;
 import android.os.WorkSource;
 import android.provider.Settings;
+import android.provider.Settings.SettingNotFoundException;
 import android.util.Slog;
+import android.view.InputDevice;
 
-import java.util.Calendar;
+import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.ListIterator;
 
-public class VibratorService extends IVibratorService.Stub {
+public class VibratorService extends IVibratorService.Stub
+        implements InputManager.InputDeviceListener {
     private static final String TAG = "VibratorService";
 
     private final LinkedList<Vibration> mVibrations;
     private Vibration mCurrentVibration;
     private final WorkSource mTmpWorkSource = new WorkSource();
+    private final Handler mH = new Handler();
+
+    private final Context mContext;
+    private final PowerManager.WakeLock mWakeLock;
+    private InputManager mIm;
+
+    volatile VibrateThread mThread;
+
+    // mInputDeviceVibrators lock should be acquired after mVibrations lock, if both are
+    // to be acquired
+    private final ArrayList<Vibrator> mInputDeviceVibrators = new ArrayList<Vibrator>();
+    private boolean mVibrateInputDevicesSetting; // guarded by mInputDeviceVibrators
+    private boolean mInputDeviceListenerRegistered; // guarded by mInputDeviceVibrators
+
+    native static boolean vibratorExists();
+    native static void vibratorOn(long milliseconds);
+    native static void vibratorOff();
 
     private class Vibration implements IBinder.DeathRecipient {
         private final IBinder mToken;
@@ -114,10 +137,23 @@ public class VibratorService extends IVibratorService.Stub {
         context.registerReceiver(mIntentReceiver, filter);
     }
 
-    public boolean hasVibrator() {
-        return vibratorExists();
+    public void systemReady() {
+        mIm = (InputManager)mContext.getSystemService(Context.INPUT_SERVICE);
+        mContext.getContentResolver().registerContentObserver(
+                Settings.System.getUriFor(Settings.System.VIBRATE_INPUT_DEVICES), true,
+                new ContentObserver(mH) {
+                    @Override
+                    public void onChange(boolean selfChange) {
+                        updateInputDeviceVibrators();
+                    }
+                });
+        updateInputDeviceVibrators();
     }
-    
+
+    public boolean hasVibrator() {
+        return doVibratorExists();
+    }
+
     public void vibrate(long milliseconds, IBinder token) {
         if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.VIBRATE)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -133,6 +169,7 @@ public class VibratorService extends IVibratorService.Stub {
             // longer than milliseconds.
             return;
         }
+
         Vibration vib = new Vibration(token, milliseconds, uid);
         synchronized (mVibrations) {
             removeVibrationLocked(token);
@@ -245,7 +282,7 @@ public class VibratorService extends IVibratorService.Stub {
             }
             mThread = null;
         }
-        vibratorOff();
+        doVibratorOff();
         mH.removeCallbacks(mVibrationRunnable);
     }
 
@@ -262,7 +299,7 @@ public class VibratorService extends IVibratorService.Stub {
     // Lock held on mVibrations
     private void startVibrationLocked(final Vibration vib) {
         if (vib.mTimeout != 0) {
-            vibratorOn(vib.mTimeout);
+            doVibratorOn(vib.mTimeout);
             mH.postDelayed(mVibrationRunnable, vib.mTimeout);
         } else {
             // mThread better be null here. doCancelVibrate should always be
@@ -297,6 +334,100 @@ public class VibratorService extends IVibratorService.Stub {
             // If Vibration object has a pattern,
             // the Vibration object has also been linkedToDeath.
             vib.mToken.unlinkToDeath(vib, 0);
+        }
+    }
+
+    private void updateInputDeviceVibrators() {
+        synchronized (mVibrations) {
+            doCancelVibrateLocked();
+
+            synchronized (mInputDeviceVibrators) {
+                mVibrateInputDevicesSetting = false;
+                try {
+                    mVibrateInputDevicesSetting = Settings.System.getInt(mContext.getContentResolver(),
+                            Settings.System.VIBRATE_INPUT_DEVICES) > 0;
+                } catch (SettingNotFoundException snfe) {
+                }
+
+                if (mVibrateInputDevicesSetting) {
+                    if (!mInputDeviceListenerRegistered) {
+                        mInputDeviceListenerRegistered = true;
+                        mIm.registerInputDeviceListener(this, mH);
+                    }
+                } else {
+                    if (mInputDeviceListenerRegistered) {
+                        mInputDeviceListenerRegistered = false;
+                        mIm.unregisterInputDeviceListener(this);
+                    }
+                }
+
+                mInputDeviceVibrators.clear();
+                if (mVibrateInputDevicesSetting) {
+                    int[] ids = mIm.getInputDeviceIds();
+                    for (int i = 0; i < ids.length; i++) {
+                        InputDevice device = mIm.getInputDevice(ids[i]);
+                        Vibrator vibrator = device.getVibrator();
+                        if (vibrator.hasVibrator()) {
+                            mInputDeviceVibrators.add(vibrator);
+                        }
+                    }
+                }
+            }
+
+            startNextVibrationLocked();
+        }
+    }
+
+    @Override
+    public void onInputDeviceAdded(int deviceId) {
+        updateInputDeviceVibrators();
+    }
+
+    @Override
+    public void onInputDeviceChanged(int deviceId) {
+        updateInputDeviceVibrators();
+    }
+
+    @Override
+    public void onInputDeviceRemoved(int deviceId) {
+        updateInputDeviceVibrators();
+    }
+
+    private boolean doVibratorExists() {
+        // For now, we choose to ignore the presence of input devices that have vibrators
+        // when reporting whether the device has a vibrator.  Applications often use this
+        // information to decide whether to enable certain features so they expect the
+        // result of hasVibrator() to be constant.  For now, just report whether
+        // the device has a built-in vibrator.
+        //synchronized (mInputDeviceVibrators) {
+        //    return !mInputDeviceVibrators.isEmpty() || vibratorExists();
+        //}
+        return vibratorExists();
+    }
+
+    private void doVibratorOn(long millis) {
+        synchronized (mInputDeviceVibrators) {
+            final int vibratorCount = mInputDeviceVibrators.size();
+            if (vibratorCount != 0) {
+                for (int i = 0; i < vibratorCount; i++) {
+                    mInputDeviceVibrators.get(i).vibrate(millis);
+                }
+            } else {
+                vibratorOn(millis);
+            }
+        }
+    }
+
+    private void doVibratorOff() {
+        synchronized (mInputDeviceVibrators) {
+            final int vibratorCount = mInputDeviceVibrators.size();
+            if (vibratorCount != 0) {
+                for (int i = 0; i < vibratorCount; i++) {
+                    mInputDeviceVibrators.get(i).cancel();
+                }
+            } else {
+                vibratorOff();
+            }
         }
     }
 
@@ -355,7 +486,7 @@ public class VibratorService extends IVibratorService.Stub {
                         // duration is saved for delay() at top of loop
                         duration = pattern[index++];
                         if (duration > 0) {
-                            VibratorService.this.vibratorOn(duration);
+                            VibratorService.this.doVibratorOn(duration);
                         }
                     } else {
                         if (repeat < 0) {
@@ -399,38 +530,4 @@ public class VibratorService extends IVibratorService.Stub {
             }
         }
     };
-
-    private Handler mH = new Handler();
-
-    private final Context mContext;
-    private final PowerManager.WakeLock mWakeLock;
-
-    volatile VibrateThread mThread;
-
-    native static boolean vibratorExists();
-    native static void vibratorOn(long milliseconds);
-    native static void vibratorOff();
-    
-    private boolean inQuietHours() {
-        boolean quietHoursEnabled = Settings.System.getInt(mContext.getContentResolver(),
-                Settings.System.QUIET_HOURS_ENABLED, 0) != 0;
-        int quietHoursStart = Settings.System.getInt(mContext.getContentResolver(),
-                Settings.System.QUIET_HOURS_START, 0);
-        int quietHoursEnd = Settings.System.getInt(mContext.getContentResolver(),
-                Settings.System.QUIET_HOURS_END, 0);
-        boolean quietHoursVibrate = Settings.System.getInt(mContext.getContentResolver(),
-                Settings.System.QUIET_HOURS_STILL, 0) != 0;
-        if (quietHoursEnabled && quietHoursVibrate && (quietHoursStart != quietHoursEnd)) {
-            // Get the date in "quiet hours" format.
-            Calendar calendar = Calendar.getInstance();
-            int minutes = calendar.get(Calendar.HOUR_OF_DAY) * 60 + calendar.get(Calendar.MINUTE);
-            if (quietHoursEnd < quietHoursStart) {
-                // Starts at night, ends in the morning.
-                return (minutes > quietHoursStart) || (minutes < quietHoursEnd);
-            } else {
-                return (minutes > quietHoursStart) && (minutes < quietHoursEnd);
-            }
-        }
-        return false;
-    }
 }

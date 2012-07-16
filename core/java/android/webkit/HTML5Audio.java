@@ -67,6 +67,8 @@ class HTML5Audio extends Handler
 
     private String mUrl;
     private boolean mAskToPlay = false;
+    private boolean mLoopEnabled = false;
+    private boolean mProcessingOnEnd = false;
     private Context mContext;
     // The handler for WebCore thread messages;
     private Handler mWebCoreHandler;
@@ -97,7 +99,7 @@ class HTML5Audio extends Handler
     private class IsPrivateBrowsingEnabledGetter {
         private boolean mIsReady;
         private boolean mIsPrivateBrowsingEnabled;
-        IsPrivateBrowsingEnabledGetter(Looper uiThreadLooper, final WebView webView) {
+        IsPrivateBrowsingEnabledGetter(Looper uiThreadLooper, final WebViewClassic webView) {
             new Handler(uiThreadLooper).post(new Runnable() {
                 @Override
                 public void run() {
@@ -147,9 +149,14 @@ class HTML5Audio extends Handler
 
     // MediaPlayer.OnCompletionListener;
     public void onCompletion(MediaPlayer mp) {
-        resetMediaPlayer();
-        mState = IDLE;
+        mState = COMPLETE;
+        mProcessingOnEnd = true;
         nativeOnEnded(mNativePointer);
+        mProcessingOnEnd = false;
+        if (mLoopEnabled == true) {
+            nativeOnRequestPlay(mNativePointer);
+            mLoopEnabled = false;
+        }
     }
 
     // MediaPlayer.OnErrorListener
@@ -190,7 +197,7 @@ class HTML5Audio extends Handler
         resetMediaPlayer();
         mContext = webViewCore.getContext();
         mIsPrivateBrowsingEnabledGetter = new IsPrivateBrowsingEnabledGetter(
-                webViewCore.getContext().getMainLooper(), webViewCore.getWebView());
+                webViewCore.getContext().getMainLooper(), webViewCore.getWebViewClassic());
     }
 
     private void resetMediaPlayer() {
@@ -289,7 +296,14 @@ class HTML5Audio extends Handler
     }
 
     private void play() {
-        if ((mState >= ERROR && mState < PREPARED) && mUrl != null) {
+        if (mState == COMPLETE && mLoopEnabled == true) {
+            // Play it again, Sam
+            mMediaPlayer.start();
+            mState = STARTED;
+            return;
+        }
+
+        if (((mState >= ERROR && mState < PREPARED)) && mUrl != null) {
             resetMediaPlayer();
             setDataSource(mUrl);
             mAskToPlay = true;
@@ -318,6 +332,9 @@ class HTML5Audio extends Handler
     }
 
     private void seek(int msec) {
+        if (mProcessingOnEnd == true && mState == COMPLETE && msec == 0) {
+            mLoopEnabled = true;
+        }
         if (mState >= PREPARED) {
             mMediaPlayer.seekTo(msec);
         }
@@ -350,7 +367,7 @@ class HTML5Audio extends Handler
 
     private native void nativeOnBuffering(int percent, int nativePointer);
     private native void nativeOnEnded(int nativePointer);
-    private native void nativeOnPaused(int nativePointer);
+    private native void nativeOnRequestPlay(int nativePointer);
     private native void nativeOnPrepared(int duration, int width, int height, int nativePointer);
     private native void nativeOnTimeupdate(int position, int nativePointer);
 

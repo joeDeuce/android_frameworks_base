@@ -455,6 +455,11 @@ public class ActivityInfo extends ComponentInfo
      */
     public static final int UIOPTION_SPLIT_ACTION_BAR_WHEN_NARROW = 1;
 
+    /**
+     * If defined, the activity named here is the logical parent of this activity.
+     */
+    public String parentActivityName;
+
     public ActivityInfo() {
     }
 
@@ -470,6 +475,7 @@ public class ActivityInfo extends ComponentInfo
         configChanges = orig.configChanges;
         softInputMode = orig.softInputMode;
         uiOptions = orig.uiOptions;
+        parentActivityName = orig.parentActivityName;
     }
     
     /**
@@ -529,6 +535,7 @@ public class ActivityInfo extends ComponentInfo
         dest.writeInt(configChanges);
         dest.writeInt(softInputMode);
         dest.writeInt(uiOptions);
+        dest.writeString(parentActivityName);
     }
 
     public static final Parcelable.Creator<ActivityInfo> CREATOR
@@ -553,5 +560,6 @@ public class ActivityInfo extends ComponentInfo
         configChanges = source.readInt();
         softInputMode = source.readInt();
         uiOptions = source.readInt();
+        parentActivityName = source.readString();
     }
 }

@@ -21,7 +21,7 @@
 
 const char* const RESOURCES_ROOT_NAMESPACE = "http://schemas.android.com/apk/res/";
 const char* const RESOURCES_ANDROID_NAMESPACE = "http://schemas.android.com/apk/res/android";
-const char* const RESOURCES_AUTO_PACKAGE_NAMESPACE = "http://schemas.android.com/apk/res/auto";
+const char* const RESOURCES_AUTO_PACKAGE_NAMESPACE = "http://schemas.android.com/apk/res-auto";
 const char* const RESOURCES_ROOT_PRV_NAMESPACE = "http://schemas.android.com/apk/prv/res/";
 const char* const XLIFF_XMLNS = "urn:oasis:names:tc:xliff:document:1.2";
 const char* const ALLOWED_XLIFF_ELEMENTS[] = {
@@ -972,7 +972,7 @@ status_t XMLNode::assignResourceIds(const sp<AaptAssets>& assets,
 status_t XMLNode::flatten(const sp<AaptFile>& dest,
         bool stripComments, bool stripRawValues) const
 {
-    StringPool strings = StringPool(false, mUTF8);
+    StringPool strings(mUTF8);
     Vector<uint32_t> resids;
     
     // First collect just the strings for attribute names that have a

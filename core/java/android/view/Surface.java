@@ -20,6 +20,7 @@ import android.content.res.CompatibilityInfo.Translator;
 import android.graphics.*;
 import android.os.Parcelable;
 import android.os.Parcel;
+import android.os.SystemProperties;
 import android.util.Log;
 
 /**
@@ -35,6 +36,15 @@ public class Surface implements Parcelable {
     public static final int ROTATION_180     = 2;
     public static final int ROTATION_270     = 3;
 
+    private static final boolean headless = "1".equals(
+        SystemProperties.get("ro.config.headless", "0"));
+
+    private static void checkHeadless() {
+        if(headless) {
+            throw new UnsupportedOperationException("Device is headless");
+        }
+    }
+
     /**
      * Create Surface from a {@link SurfaceTexture}.
      *
@@ -46,6 +56,8 @@ public class Surface implements Parcelable {
      * Surface.
      */
     public Surface(SurfaceTexture surfaceTexture) {
+        checkHeadless();
+
         if (DEBUG_RELEASE) {
             mCreationStack = new Exception();
         }
@@ -256,6 +268,8 @@ public class Surface implements Parcelable {
     public Surface(SurfaceSession s,
             int pid, int display, int w, int h, int format, int flags)
         throws OutOfResourcesException {
+        checkHeadless();
+
         if (DEBUG_RELEASE) {
             mCreationStack = new Exception();
         }
@@ -267,6 +281,8 @@ public class Surface implements Parcelable {
     public Surface(SurfaceSession s,
             int pid, String name, int display, int w, int h, int format, int flags)
         throws OutOfResourcesException {
+        checkHeadless();
+
         if (DEBUG_RELEASE) {
             mCreationStack = new Exception();
         }
@@ -281,6 +297,8 @@ public class Surface implements Parcelable {
      * @hide
      */
     public Surface() {
+        checkHeadless();
+
         if (DEBUG_RELEASE) {
             mCreationStack = new Exception();
         }
@@ -316,6 +334,15 @@ public class Surface implements Parcelable {
     public int getGenerationId() {
         return mSurfaceGenerationId;
     }
+
+
+    /**
+     * Whether the consumer of this Surface is running behind the producer;
+     * that is, isConsumerRunningBehind() returns true if the consumer is more
+     * than one buffer ahead of the producer.
+     * @hide
+     */
+    public native boolean isConsumerRunningBehind();
 
     /**
      * A Canvas class that can handle the compatibility mode. This does two
@@ -495,6 +522,8 @@ public class Surface implements Parcelable {
     public native   void setFreezeTint(int tint);
     /** @hide */
     public native   void setFlags(int flags, int mask);
+    /** @hide */
+    public native   void setWindowCrop(Rect crop);
 
 
    

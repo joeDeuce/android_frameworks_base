@@ -65,8 +65,8 @@ class CallbackProxy extends Handler {
     private volatile WebViewClient mWebViewClient;
     // Instance of WebChromeClient for handling all chrome functions.
     private volatile WebChromeClient mWebChromeClient;
-    // Instance of WebView for handling UI requests.
-    private final WebView mWebView;
+    // Instance of WebViewClassic for handling UI requests.
+    private final WebViewClassic mWebView;
     // Client registered callback listener for download events
     private volatile DownloadListener mDownloadListener;
     // Keep track of multiple progress updates.
@@ -80,6 +80,8 @@ class CallbackProxy extends Handler {
     private volatile WebBackForwardListClient mWebBackForwardListClient;
     // Used to call startActivity during url override.
     private final Context mContext;
+    // block messages flag for destroy
+    private boolean mBlockMessages;
 
     // Message IDs
     private static final int PAGE_STARTED                         = 100;
@@ -151,14 +153,62 @@ class CallbackProxy extends Handler {
         }
     }
 
+    private class JsResultReceiver implements JsResult.ResultReceiver {
+        // This prevents a user from interacting with the result before WebCore is
+        // ready to handle it.
+        private boolean mReady;
+        // Tells us if the user tried to confirm or cancel the result before WebCore
+        // is ready.
+        private boolean mTriedToNotifyBeforeReady;
+
+        public JsPromptResult mJsResult = new JsPromptResult(this);
+
+        final void setReady() {
+            mReady = true;
+            if (mTriedToNotifyBeforeReady) {
+                notifyCallbackProxy();
+            }
+        }
+
+        /* Wake up the WebCore thread. */
+        @Override
+        public void onJsResultComplete(JsResult result) {
+            if (mReady) {
+                notifyCallbackProxy();
+            } else {
+                mTriedToNotifyBeforeReady = true;
+            }
+        }
+
+        private void notifyCallbackProxy() {
+            synchronized (CallbackProxy.this) {
+                CallbackProxy.this.notify();
+            }
+        }
+}
+
     /**
      * Construct a new CallbackProxy.
      */
-    public CallbackProxy(Context context, WebView w) {
+    public CallbackProxy(Context context, WebViewClassic w) {
         // Used to start a default activity.
         mContext = context;
         mWebView = w;
         mBackForwardList = new WebBackForwardList(this);
+    }
+
+    protected synchronized void blockMessages() {
+        mBlockMessages = true;
+    }
+
+    protected synchronized boolean messagesBlocked() {
+        return mBlockMessages;
+    }
+
+    protected void shutdown() {
+        removeCallbacksAndMessages(null);
+        setWebViewClient(null);
+        setWebChromeClient(null);
     }
 
     /**
@@ -227,7 +277,7 @@ class CallbackProxy extends Handler {
         }
         boolean override = false;
         if (mWebViewClient != null) {
-            override = mWebViewClient.shouldOverrideUrlLoading(mWebView,
+            override = mWebViewClient.shouldOverrideUrlLoading(mWebView.getWebView(),
                     overrideUrl);
         } else {
             Intent intent = new Intent(Intent.ACTION_VIEW,
@@ -254,7 +304,7 @@ class CallbackProxy extends Handler {
      */
     public boolean uiOverrideKeyEvent(KeyEvent event) {
         if (mWebViewClient != null) {
-            return mWebViewClient.shouldOverrideKeyEvent(mWebView, event);
+            return mWebViewClient.shouldOverrideKeyEvent(mWebView.getWebView(), event);
         }
         return false;
     }
@@ -265,12 +315,14 @@ class CallbackProxy extends Handler {
         // in the UI thread. The WebViewClient and WebChromeClient functions
         // that check for a non-null callback are ok because java ensures atomic
         // 32-bit reads and writes.
+        if (messagesBlocked()) return;
         switch (msg.what) {
             case PAGE_STARTED:
                 String startedUrl = msg.getData().getString("url");
                 mWebView.onPageStarted(startedUrl);
                 if (mWebViewClient != null) {
-                    mWebViewClient.onPageStarted(mWebView, startedUrl, (Bitmap) msg.obj);
+                    mWebViewClient.onPageStarted(mWebView.getWebView(), startedUrl,
+                            (Bitmap) msg.obj);
                 }
                 break;
 
@@ -278,26 +330,26 @@ class CallbackProxy extends Handler {
                 String finishedUrl = (String) msg.obj;
                 mWebView.onPageFinished(finishedUrl);
                 if (mWebViewClient != null) {
-                    mWebViewClient.onPageFinished(mWebView, finishedUrl);
+                    mWebViewClient.onPageFinished(mWebView.getWebView(), finishedUrl);
                 }
                 break;
 
             case RECEIVED_ICON:
                 if (mWebChromeClient != null) {
-                    mWebChromeClient.onReceivedIcon(mWebView, (Bitmap) msg.obj);
+                    mWebChromeClient.onReceivedIcon(mWebView.getWebView(), (Bitmap) msg.obj);
                 }
                 break;
 
             case RECEIVED_TOUCH_ICON_URL:
                 if (mWebChromeClient != null) {
-                    mWebChromeClient.onReceivedTouchIconUrl(mWebView,
+                    mWebChromeClient.onReceivedTouchIconUrl(mWebView.getWebView(),
                             (String) msg.obj, msg.arg1 == 1);
                 }
                 break;
 
             case RECEIVED_TITLE:
                 if (mWebChromeClient != null) {
-                    mWebChromeClient.onReceivedTitle(mWebView,
+                    mWebChromeClient.onReceivedTitle(mWebView.getWebView(),
                             (String) msg.obj);
                 }
                 break;
@@ -307,7 +359,7 @@ class CallbackProxy extends Handler {
                     int reasonCode = msg.arg1;
                     final String description  = msg.getData().getString("description");
                     final String failUrl  = msg.getData().getString("failingUrl");
-                    mWebViewClient.onReceivedError(mWebView, reasonCode,
+                    mWebViewClient.onReceivedError(mWebView.getWebView(), reasonCode,
                             description, failUrl);
                 }
                 break;
@@ -318,7 +370,7 @@ class CallbackProxy extends Handler {
                 Message dontResend =
                         (Message) msg.getData().getParcelable("dontResend");
                 if (mWebViewClient != null) {
-                    mWebViewClient.onFormResubmission(mWebView, dontResend,
+                    mWebViewClient.onFormResubmission(mWebView.getWebView(), dontResend,
                             resend);
                 } else {
                     dontResend.sendToTarget();
@@ -341,7 +393,7 @@ class CallbackProxy extends Handler {
                     HttpAuthHandler handler = (HttpAuthHandler) msg.obj;
                     String host = msg.getData().getString("host");
                     String realm = msg.getData().getString("realm");
-                    mWebViewClient.onReceivedHttpAuthRequest(mWebView, handler,
+                    mWebViewClient.onReceivedHttpAuthRequest(mWebView.getWebView(), handler,
                             host, realm);
                 }
                 break;
@@ -350,7 +402,7 @@ class CallbackProxy extends Handler {
                 if (mWebViewClient != null) {
                     HashMap<String, Object> map =
                         (HashMap<String, Object>) msg.obj;
-                    mWebViewClient.onReceivedSslError(mWebView,
+                    mWebViewClient.onReceivedSslError(mWebView.getWebView(),
                             (SslErrorHandler) map.get("handler"),
                             (SslError) map.get("error"));
                 }
@@ -358,7 +410,7 @@ class CallbackProxy extends Handler {
 
             case PROCEEDED_AFTER_SSL_ERROR:
                 if (mWebViewClient != null) {
-                    mWebViewClient.onProceededAfterSslError(mWebView,
+                    mWebViewClient.onProceededAfterSslError(mWebView.getWebView(),
                             (SslError) msg.obj);
                 }
                 break;
@@ -367,7 +419,7 @@ class CallbackProxy extends Handler {
                 if (mWebViewClient != null) {
                     HashMap<String, Object> map =
                         (HashMap<String, Object>) msg.obj;
-                    mWebViewClient.onReceivedClientCertRequest(mWebView,
+                    mWebViewClient.onReceivedClientCertRequest(mWebView.getWebView(),
                             (ClientCertRequestHandler) map.get("handler"),
                             (String) map.get("host_and_port"));
                 }
@@ -379,7 +431,7 @@ class CallbackProxy extends Handler {
                 // changed.
                 synchronized (this) {
                     if (mWebChromeClient != null) {
-                        mWebChromeClient.onProgressChanged(mWebView,
+                        mWebChromeClient.onProgressChanged(mWebView.getWebView(),
                                 mLatestProgress);
                     }
                     mProgressUpdatePending = false;
@@ -388,14 +440,14 @@ class CallbackProxy extends Handler {
 
             case UPDATE_VISITED:
                 if (mWebViewClient != null) {
-                    mWebViewClient.doUpdateVisitedHistory(mWebView,
+                    mWebViewClient.doUpdateVisitedHistory(mWebView.getWebView(),
                             (String) msg.obj, msg.arg1 != 0);
                 }
                 break;
 
             case LOAD_RESOURCE:
                 if (mWebViewClient != null) {
-                    mWebViewClient.onLoadResource(mWebView, (String) msg.obj);
+                    mWebViewClient.onLoadResource(mWebView.getWebView(), (String) msg.obj);
                 }
                 break;
 
@@ -415,7 +467,7 @@ class CallbackProxy extends Handler {
 
             case CREATE_WINDOW:
                 if (mWebChromeClient != null) {
-                    if (!mWebChromeClient.onCreateWindow(mWebView,
+                    if (!mWebChromeClient.onCreateWindow(mWebView.getWebView(),
                                 msg.arg1 == 1, msg.arg2 == 1,
                                 (Message) msg.obj)) {
                         synchronized (this) {
@@ -428,13 +480,13 @@ class CallbackProxy extends Handler {
 
             case REQUEST_FOCUS:
                 if (mWebChromeClient != null) {
-                    mWebChromeClient.onRequestFocus(mWebView);
+                    mWebChromeClient.onRequestFocus(mWebView.getWebView());
                 }
                 break;
 
             case CLOSE_WINDOW:
                 if (mWebChromeClient != null) {
-                    mWebChromeClient.onCloseWindow((WebView) msg.obj);
+                    mWebChromeClient.onCloseWindow(((WebViewClassic) msg.obj).getWebView());
                 }
                 break;
 
@@ -455,7 +507,7 @@ class CallbackProxy extends Handler {
 
             case ASYNC_KEYEVENTS:
                 if (mWebViewClient != null) {
-                    mWebViewClient.onUnhandledKeyEvent(mWebView,
+                    mWebViewClient.onUnhandledKeyEvent(mWebView.getWebView(),
                             (KeyEvent) msg.obj);
                 }
                 break;
@@ -467,18 +519,18 @@ class CallbackProxy extends Handler {
                     String databaseIdentifier =
                             (String) map.get("databaseIdentifier");
                     String url = (String) map.get("url");
-                    long currentQuota =
-                            ((Long) map.get("currentQuota")).longValue();
-                    long totalUsedQuota =
-                            ((Long) map.get("totalUsedQuota")).longValue();
-                    long estimatedSize =
-                            ((Long) map.get("estimatedSize")).longValue();
+                    long quota =
+                            ((Long) map.get("quota")).longValue();
+                    long totalQuota =
+                            ((Long) map.get("totalQuota")).longValue();
+                    long estimatedDatabaseSize =
+                            ((Long) map.get("estimatedDatabaseSize")).longValue();
                     WebStorage.QuotaUpdater quotaUpdater =
                         (WebStorage.QuotaUpdater) map.get("quotaUpdater");
 
                     mWebChromeClient.onExceededDatabaseQuota(url,
-                            databaseIdentifier, currentQuota, estimatedSize,
-                            totalUsedQuota, quotaUpdater);
+                            databaseIdentifier, quota, estimatedDatabaseSize,
+                            totalQuota, quotaUpdater);
                 }
                 break;
 
@@ -486,15 +538,15 @@ class CallbackProxy extends Handler {
                 if (mWebChromeClient != null) {
                     HashMap<String, Object> map =
                             (HashMap<String, Object>) msg.obj;
-                    long spaceNeeded =
-                            ((Long) map.get("spaceNeeded")).longValue();
-                    long totalUsedQuota =
-                        ((Long) map.get("totalUsedQuota")).longValue();
+                    long requiredStorage =
+                            ((Long) map.get("requiredStorage")).longValue();
+                    long quota =
+                        ((Long) map.get("quota")).longValue();
                     WebStorage.QuotaUpdater quotaUpdater =
                         (WebStorage.QuotaUpdater) map.get("quotaUpdater");
 
-                    mWebChromeClient.onReachedMaxAppCacheSize(spaceNeeded,
-                            totalUsedQuota, quotaUpdater);
+                    mWebChromeClient.onReachedMaxAppCacheSize(requiredStorage,
+                            quota, quotaUpdater);
                 }
                 break;
 
@@ -577,14 +629,15 @@ class CallbackProxy extends Handler {
 
             case JS_ALERT:
                 if (mWebChromeClient != null) {
-                    final JsResult res = (JsResult) msg.obj;
+                    final JsResultReceiver receiver = (JsResultReceiver) msg.obj;
+                    final JsResult res = receiver.mJsResult;
                     String message = msg.getData().getString("message");
                     String url = msg.getData().getString("url");
-                    if (!mWebChromeClient.onJsAlert(mWebView, url, message,
+                    if (!mWebChromeClient.onJsAlert(mWebView.getWebView(), url, message,
                             res)) {
                         if (!canShowAlertDialog()) {
                             res.cancel();
-                            res.setReady();
+                            receiver.setReady();
                             break;
                         }
                         new AlertDialog.Builder(mContext)
@@ -607,20 +660,21 @@ class CallbackProxy extends Handler {
                                         })
                                 .show();
                     }
-                    res.setReady();
+                    receiver.setReady();
                 }
                 break;
 
             case JS_CONFIRM:
                 if (mWebChromeClient != null) {
-                    final JsResult res = (JsResult) msg.obj;
+                    final JsResultReceiver receiver = (JsResultReceiver) msg.obj;
+                    final JsResult res = receiver.mJsResult;
                     String message = msg.getData().getString("message");
                     String url = msg.getData().getString("url");
-                    if (!mWebChromeClient.onJsConfirm(mWebView, url, message,
+                    if (!mWebChromeClient.onJsConfirm(mWebView.getWebView(), url, message,
                             res)) {
                         if (!canShowAlertDialog()) {
                             res.cancel();
-                            res.setReady();
+                            receiver.setReady();
                             break;
                         }
                         new AlertDialog.Builder(mContext)
@@ -651,21 +705,22 @@ class CallbackProxy extends Handler {
                     }
                     // Tell the JsResult that it is ready for client
                     // interaction.
-                    res.setReady();
+                    receiver.setReady();
                 }
                 break;
 
             case JS_PROMPT:
                 if (mWebChromeClient != null) {
-                    final JsPromptResult res = (JsPromptResult) msg.obj;
+                    final JsResultReceiver receiver = (JsResultReceiver) msg.obj;
+                    final JsPromptResult res = receiver.mJsResult;
                     String message = msg.getData().getString("message");
                     String defaultVal = msg.getData().getString("default");
                     String url = msg.getData().getString("url");
-                    if (!mWebChromeClient.onJsPrompt(mWebView, url, message,
+                    if (!mWebChromeClient.onJsPrompt(mWebView.getWebView(), url, message,
                                 defaultVal, res)) {
                         if (!canShowAlertDialog()) {
                             res.cancel();
-                            res.setReady();
+                            receiver.setReady();
                             break;
                         }
                         final LayoutInflater factory = LayoutInflater
@@ -708,20 +763,21 @@ class CallbackProxy extends Handler {
                     }
                     // Tell the JsResult that it is ready for client
                     // interaction.
-                    res.setReady();
+                    receiver.setReady();
                 }
                 break;
 
             case JS_UNLOAD:
                 if (mWebChromeClient != null) {
-                    final JsResult res = (JsResult) msg.obj;
+                    final JsResultReceiver receiver = (JsResultReceiver) msg.obj;
+                    final JsResult res = receiver.mJsResult;
                     String message = msg.getData().getString("message");
                     String url = msg.getData().getString("url");
-                    if (!mWebChromeClient.onJsBeforeUnload(mWebView, url,
+                    if (!mWebChromeClient.onJsBeforeUnload(mWebView.getWebView(), url,
                             message, res)) {
                         if (!canShowAlertDialog()) {
                             res.cancel();
-                            res.setReady();
+                            receiver.setReady();
                             break;
                         }
                         final String m = mContext.getString(
@@ -746,19 +802,20 @@ class CallbackProxy extends Handler {
                                         })
                                 .show();
                     }
-                    res.setReady();
+                    receiver.setReady();
                 }
                 break;
 
             case JS_TIMEOUT:
                 if(mWebChromeClient != null) {
-                    final JsResult res = (JsResult) msg.obj;
+                    final JsResultReceiver receiver = (JsResultReceiver) msg.obj;
+                    final JsResult res = receiver.mJsResult;
                     if(mWebChromeClient.onJsTimeout()) {
                         res.confirm();
                     } else {
                         res.cancel();
                     }
-                    res.setReady();
+                    receiver.setReady();
                 }
                 break;
 
@@ -774,7 +831,7 @@ class CallbackProxy extends Handler {
 
             case SCALE_CHANGED:
                 if (mWebViewClient != null) {
-                    mWebViewClient.onScaleChanged(mWebView, msg.getData()
+                    mWebViewClient.onScaleChanged(mWebView.getWebView(), msg.getData()
                             .getFloat("old"), msg.getData().getFloat("new"));
                 }
                 break;
@@ -837,7 +894,8 @@ class CallbackProxy extends Handler {
             case OPEN_FILE_CHOOSER:
                 if (mWebChromeClient != null) {
                     UploadFileMessageData data = (UploadFileMessageData)msg.obj;
-                    mWebChromeClient.openFileChooser(data.getUploadFile(), data.getAcceptType());
+                    mWebChromeClient.openFileChooser(data.getUploadFile(), data.getAcceptType(),
+                            data.getCapture());
                 }
                 break;
 
@@ -881,7 +939,7 @@ class CallbackProxy extends Handler {
                     String realm = msg.getData().getString("realm");
                     String account = msg.getData().getString("account");
                     String args = msg.getData().getString("args");
-                    mWebViewClient.onReceivedLoginRequest(mWebView, realm,
+                    mWebViewClient.onReceivedLoginRequest(mWebView.getWebView(), realm,
                             account, args);
                 }
                 break;
@@ -984,7 +1042,6 @@ class CallbackProxy extends Handler {
         if (PERF_PROBE) {
             mWebCoreThreadTime = SystemClock.currentThreadTimeMillis();
             mWebCoreIdleTime = 0;
-            Network.getInstance(mContext).startTiming();
             // un-comment this if PERF_PROBE is true
 //            Looper.myQueue().setWaitCallback(mIdleCallback);
         }
@@ -1002,7 +1059,6 @@ class CallbackProxy extends Handler {
             Log.d("WebCore", "WebCore thread used " +
                     (SystemClock.currentThreadTimeMillis() - mWebCoreThreadTime)
                     + " ms and idled " + mWebCoreIdleTime + " ms");
-            Network.getInstance(mContext).stopTiming();
         }
         Message msg = obtainMessage(PAGE_FINISHED, url);
         sendMessage(msg);
@@ -1055,15 +1111,7 @@ class CallbackProxy extends Handler {
         Message msg = obtainMessage(OVERRIDE_URL);
         msg.getData().putString("url", url);
         msg.obj = res;
-        synchronized (this) {
-            sendMessage(msg);
-            try {
-                wait();
-            } catch (InterruptedException e) {
-                Log.e(LOGTAG, "Caught exception while waiting for overrideUrl");
-                Log.e(LOGTAG, Log.getStackTraceString(e));
-            }
-        }
+        sendMessageToUiThreadSync(msg);
         return res.getResult().booleanValue();
     }
 
@@ -1140,7 +1188,7 @@ class CallbackProxy extends Handler {
         }
         // Note: This method does _not_ send a message.
         WebResourceResponse r =
-                mWebViewClient.shouldInterceptRequest(mWebView, url);
+                mWebViewClient.shouldInterceptRequest(mWebView.getWebView(), url);
         if (r == null) {
             sendMessage(obtainMessage(LOAD_RESOURCE, url));
         }
@@ -1231,16 +1279,7 @@ class CallbackProxy extends Handler {
         bundle.putString("host", schemePlusHost);
         bundle.putString("username", username);
         bundle.putString("password", password);
-        synchronized (this) {
-            sendMessage(msg);
-            try {
-                wait();
-            } catch (InterruptedException e) {
-                Log.e(LOGTAG,
-                        "Caught exception while waiting for onSavePassword");
-                Log.e(LOGTAG, Log.getStackTraceString(e));
-            }
-        }
+        sendMessageToUiThreadSync(msg);
         // Doesn't matter here
         return false;
     }
@@ -1285,22 +1324,13 @@ class CallbackProxy extends Handler {
             return null;
         }
 
-        WebView.WebViewTransport transport = mWebView.new WebViewTransport();
+        WebView.WebViewTransport transport =
+            mWebView.getWebView().new WebViewTransport();
         final Message msg = obtainMessage(NOTIFY);
         msg.obj = transport;
-        synchronized (this) {
-            sendMessage(obtainMessage(CREATE_WINDOW, dialog ? 1 : 0,
-                    userGesture ? 1 : 0, msg));
-            try {
-                wait();
-            } catch (InterruptedException e) {
-                Log.e(LOGTAG,
-                        "Caught exception while waiting for createWindow");
-                Log.e(LOGTAG, Log.getStackTraceString(e));
-            }
-        }
-
-        WebView w = transport.getWebView();
+        sendMessageToUiThreadSync(obtainMessage(CREATE_WINDOW, dialog ? 1 : 0,
+                userGesture ? 1 : 0, msg));
+        WebViewClassic w = WebViewClassic.fromWebView(transport.getWebView());
         if (w != null) {
             WebViewCore core = w.getWebViewCore();
             // If WebView.destroy() has been called, core may be null.  Skip
@@ -1323,7 +1353,7 @@ class CallbackProxy extends Handler {
         sendEmptyMessage(REQUEST_FOCUS);
     }
 
-    public void onCloseWindow(WebView window) {
+    public void onCloseWindow(WebViewClassic window) {
         // Do an unsynchronized quick check to avoid posting if no callback has
         // been set.
         if (mWebChromeClient == null) {
@@ -1378,19 +1408,11 @@ class CallbackProxy extends Handler {
         if (mWebChromeClient == null) {
             return;
         }
-        JsResult result = new JsResult(this, false);
+        JsResultReceiver result = new JsResultReceiver();
         Message alert = obtainMessage(JS_ALERT, result);
         alert.getData().putString("message", message);
         alert.getData().putString("url", url);
-        synchronized (this) {
-            sendMessage(alert);
-            try {
-                wait();
-            } catch (InterruptedException e) {
-                Log.e(LOGTAG, "Caught exception while waiting for jsAlert");
-                Log.e(LOGTAG, Log.getStackTraceString(e));
-            }
-        }
+        sendMessageToUiThreadSync(alert);
     }
 
     public boolean onJsConfirm(String url, String message) {
@@ -1399,20 +1421,12 @@ class CallbackProxy extends Handler {
         if (mWebChromeClient == null) {
             return false;
         }
-        JsResult result = new JsResult(this, false);
+        JsResultReceiver result = new JsResultReceiver();
         Message confirm = obtainMessage(JS_CONFIRM, result);
         confirm.getData().putString("message", message);
         confirm.getData().putString("url", url);
-        synchronized (this) {
-            sendMessage(confirm);
-            try {
-                wait();
-            } catch (InterruptedException e) {
-                Log.e(LOGTAG, "Caught exception while waiting for jsConfirm");
-                Log.e(LOGTAG, Log.getStackTraceString(e));
-            }
-        }
-        return result.getResult();
+        sendMessageToUiThreadSync(confirm);
+        return result.mJsResult.getResult();
     }
 
     public String onJsPrompt(String url, String message, String defaultValue) {
@@ -1421,21 +1435,13 @@ class CallbackProxy extends Handler {
         if (mWebChromeClient == null) {
             return null;
         }
-        JsPromptResult result = new JsPromptResult(this);
+        JsResultReceiver result = new JsResultReceiver();
         Message prompt = obtainMessage(JS_PROMPT, result);
         prompt.getData().putString("message", message);
         prompt.getData().putString("default", defaultValue);
         prompt.getData().putString("url", url);
-        synchronized (this) {
-            sendMessage(prompt);
-            try {
-                wait();
-            } catch (InterruptedException e) {
-                Log.e(LOGTAG, "Caught exception while waiting for jsPrompt");
-                Log.e(LOGTAG, Log.getStackTraceString(e));
-            }
-        }
-        return result.getStringResult();
+        sendMessageToUiThreadSync(prompt);
+        return result.mJsResult.getStringResult();
     }
 
     public boolean onJsBeforeUnload(String url, String message) {
@@ -1444,20 +1450,12 @@ class CallbackProxy extends Handler {
         if (mWebChromeClient == null) {
             return true;
         }
-        JsResult result = new JsResult(this, true);
+        JsResultReceiver result = new JsResultReceiver();
         Message confirm = obtainMessage(JS_UNLOAD, result);
         confirm.getData().putString("message", message);
         confirm.getData().putString("url", url);
-        synchronized (this) {
-            sendMessage(confirm);
-            try {
-                wait();
-            } catch (InterruptedException e) {
-                Log.e(LOGTAG, "Caught exception while waiting for jsUnload");
-                Log.e(LOGTAG, Log.getStackTraceString(e));
-            }
-        }
-        return result.getResult();
+        sendMessageToUiThreadSync(confirm);
+        return result.mJsResult.getResult();
     }
 
     /**
@@ -1469,19 +1467,21 @@ class CallbackProxy extends Handler {
      * @param url The URL that caused the quota overflow.
      * @param databaseIdentifier The identifier of the database that the
      *     transaction that caused the overflow was running on.
-     * @param currentQuota The current quota the origin is allowed.
-     * @param estimatedSize The estimated size of the database.
-     * @param totalUsedQuota is the sum of all origins' quota.
+     * @param quota The current quota the origin is allowed.
+     * @param estimatedDatabaseSize The estimated size of the database.
+     * @param totalQuota is the sum of all origins' quota.
      * @param quotaUpdater An instance of a class encapsulating a callback
      *     to WebViewCore to run when the decision to allow or deny more
      *     quota has been made.
      */
     public void onExceededDatabaseQuota(
-            String url, String databaseIdentifier, long currentQuota,
-            long estimatedSize, long totalUsedQuota,
+            String url, String databaseIdentifier, long quota,
+            long estimatedDatabaseSize, long totalQuota,
             WebStorage.QuotaUpdater quotaUpdater) {
         if (mWebChromeClient == null) {
-            quotaUpdater.updateQuota(currentQuota);
+            // Native-side logic prevents the quota being updated to a smaller
+            // value.
+            quotaUpdater.updateQuota(quota);
             return;
         }
 
@@ -1489,9 +1489,9 @@ class CallbackProxy extends Handler {
         HashMap<String, Object> map = new HashMap();
         map.put("databaseIdentifier", databaseIdentifier);
         map.put("url", url);
-        map.put("currentQuota", currentQuota);
-        map.put("estimatedSize", estimatedSize);
-        map.put("totalUsedQuota", totalUsedQuota);
+        map.put("quota", quota);
+        map.put("estimatedDatabaseSize", estimatedDatabaseSize);
+        map.put("totalQuota", totalQuota);
         map.put("quotaUpdater", quotaUpdater);
         exceededQuota.obj = map;
         sendMessage(exceededQuota);
@@ -1500,24 +1500,26 @@ class CallbackProxy extends Handler {
     /**
      * Called by WebViewCore to inform the Java side that the appcache has
      * exceeded its max size.
-     * @param spaceNeeded is the amount of disk space that would be needed
-     * in order for the last appcache operation to succeed.
-     * @param totalUsedQuota is the sum of all origins' quota.
+     * @param requiredStorage is the amount of storage, in bytes, that would be
+     * needed in order for the last appcache operation to succeed.
+     * @param quota is the current quota (for all origins).
      * @param quotaUpdater An instance of a class encapsulating a callback
      * to WebViewCore to run when the decision to allow or deny a bigger
      * app cache size has been made.
      */
-    public void onReachedMaxAppCacheSize(long spaceNeeded,
-            long totalUsedQuota, WebStorage.QuotaUpdater quotaUpdater) {
+    public void onReachedMaxAppCacheSize(long requiredStorage,
+            long quota, WebStorage.QuotaUpdater quotaUpdater) {
         if (mWebChromeClient == null) {
-            quotaUpdater.updateQuota(0);
+            // Native-side logic prevents the quota being updated to a smaller
+            // value.
+            quotaUpdater.updateQuota(quota);
             return;
         }
 
         Message msg = obtainMessage(REACHED_APPCACHE_MAXSIZE);
         HashMap<String, Object> map = new HashMap();
-        map.put("spaceNeeded", spaceNeeded);
-        map.put("totalUsedQuota", totalUsedQuota);
+        map.put("requiredStorage", requiredStorage);
+        map.put("quota", quota);
         map.put("quotaUpdater", quotaUpdater);
         msg.obj = map;
         sendMessage(msg);
@@ -1643,18 +1645,10 @@ class CallbackProxy extends Handler {
         if (mWebChromeClient == null) {
             return true;
         }
-        JsResult result = new JsResult(this, true);
+        JsResultReceiver result = new JsResultReceiver();
         Message timeout = obtainMessage(JS_TIMEOUT, result);
-        synchronized (this) {
-            sendMessage(timeout);
-            try {
-                wait();
-            } catch (InterruptedException e) {
-                Log.e(LOGTAG, "Caught exception while waiting for jsUnload");
-                Log.e(LOGTAG, Log.getStackTraceString(e));
-            }
-        }
-        return result.getResult();
+        sendMessageToUiThreadSync(timeout);
+        return result.mJsResult.getResult();
     }
 
     public void getVisitedHistory(ValueCallback<String[]> callback) {
@@ -1669,10 +1663,12 @@ class CallbackProxy extends Handler {
     private static class UploadFileMessageData {
         private UploadFile mCallback;
         private String mAcceptType;
+        private String mCapture;
 
-        public UploadFileMessageData(UploadFile uploadFile, String acceptType) {
+        public UploadFileMessageData(UploadFile uploadFile, String acceptType, String capture) {
             mCallback = uploadFile;
             mAcceptType = acceptType;
+            mCapture = capture;
         }
 
         public UploadFile getUploadFile() {
@@ -1681,6 +1677,10 @@ class CallbackProxy extends Handler {
 
         public String getAcceptType() {
             return mAcceptType;
+        }
+
+        public String getCapture() {
+            return mCapture;
         }
     }
 
@@ -1700,24 +1700,15 @@ class CallbackProxy extends Handler {
     /**
      * Called by WebViewCore to open a file chooser.
      */
-    /* package */ Uri openFileChooser(String acceptType) {
+    /* package */ Uri openFileChooser(String acceptType, String capture) {
         if (mWebChromeClient == null) {
             return null;
         }
         Message myMessage = obtainMessage(OPEN_FILE_CHOOSER);
         UploadFile uploadFile = new UploadFile();
-        UploadFileMessageData data = new UploadFileMessageData(uploadFile, acceptType);
+        UploadFileMessageData data = new UploadFileMessageData(uploadFile, acceptType, capture);
         myMessage.obj = data;
-        synchronized (this) {
-            sendMessage(myMessage);
-            try {
-                wait();
-            } catch (InterruptedException e) {
-                Log.e(LOGTAG,
-                        "Caught exception while waiting for openFileChooser");
-                Log.e(LOGTAG, Log.getStackTraceString(e));
-            }
-        }
+        sendMessageToUiThreadSync(myMessage);
         return uploadFile.getResult();
     }
 
@@ -1764,7 +1755,7 @@ class CallbackProxy extends Handler {
 
     void onIsSupportedCallback(boolean isSupported) {
         Message msg = obtainMessage(SEARCHBOX_IS_SUPPORTED_CALLBACK);
-        msg.obj = new Boolean(isSupported);
+        msg.obj = Boolean.valueOf(isSupported);
         sendMessage(msg);
     }
 
@@ -1775,5 +1766,17 @@ class CallbackProxy extends Handler {
         msg.getData().putInt("id", id);
 
         sendMessage(msg);
+    }
+
+    private synchronized void sendMessageToUiThreadSync(Message msg) {
+        sendMessage(msg);
+        WebCoreThreadWatchdog.pause();
+        try {
+            wait();
+        } catch (InterruptedException e) {
+            Log.e(LOGTAG, "Caught exception waiting for synchronous UI message to be processed");
+            Log.e(LOGTAG, Log.getStackTraceString(e));
+        }
+        WebCoreThreadWatchdog.resume();
     }
 }

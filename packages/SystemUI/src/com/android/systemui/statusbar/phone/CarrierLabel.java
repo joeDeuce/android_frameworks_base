@@ -22,6 +22,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.provider.Settings;
 import android.provider.Telephony;
+import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.Slog;
 import android.view.View;
@@ -91,47 +92,20 @@ public class CarrierLabel extends TextView {
             Slog.d("CarrierLabel", "updateNetworkName showSpn=" + showSpn + " spn=" + spn
                     + " showPlmn=" + showPlmn + " plmn=" + plmn);
         }
-
-        String customLabel = null;
-        customLabel = Settings.System.getString(mContext.getContentResolver(),
-                Settings.System.CUSTOM_CARRIER_LABEL);
-
-        StringBuilder str = new StringBuilder();
-        boolean something = false;
-        if (showPlmn && plmn != null) {
-            str.append(plmn);
-            something = true;
-        }
-        if (showSpn && spn != null) {
-            if (something) {
-                str.append('\n');
-            }
-            str.append(spn);
-            something = true;
-        }
-        if (!something) {
-            str.append(com.android.internal.R.string.lockscreen_carrier_default);
-        }
-
-        if (customLabel == null) {
-            setText(str.toString());
+        final String str;
+        // match logic in KeyguardStatusViewManager
+        final boolean plmnValid = showPlmn && !TextUtils.isEmpty(plmn);
+        final boolean spnValid = showSpn && !TextUtils.isEmpty(spn);
+        if (plmnValid && spnValid) {
+            str = plmn + "|" + spn;
+        } else if (plmnValid) {
+            str = plmn;
+        } else if (spnValid) {
+            str = spn;
         } else {
-            // If the custom carrier label contains any "$x" items then we must
-            // replace those with the proper text.
-            //  - $n = new line
-            //  - $d = default carrier text
-            //  - $p = plmn carrier text
-            //  - $s = spn carrier text
-            //
-
-            // For the default carrier text we will use str, which we created above.
-            String customStr = customLabel;
-            customStr = customStr.replaceAll("\\$n", "\n");
-            customStr = customStr.replaceAll("\\$d", (str != null) ? str.toString() : "");
-            customStr = customStr.replaceAll("\\$p", (plmn != null) ? plmn : "");
-            customStr = customStr.replaceAll("\\$s", (spn != null) ? spn : "");
-            setText(customStr);
+            str = "";
         }
+        setText(str);
     }
 
 }

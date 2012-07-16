@@ -69,12 +69,12 @@ static inline int write_error_check(int fd, const char* line, int len) {
     errno = 0;
     ret = write(fd, line, len);
     if (ret < 0) {
-        LOGE("%s: write() failed: %s (%d)", __FUNCTION__, strerror(errno),
+        ALOGE("%s: write() failed: %s (%d)", __FUNCTION__, strerror(errno),
              errno);
         return -1;
     }
     if (ret != len) {
-        LOGE("%s: write() only wrote %d of %d bytes", __FUNCTION__, ret, len);
+        ALOGE("%s: write() only wrote %d of %d bytes", __FUNCTION__, ret, len);
         return -1;
     }
     return 0;
@@ -131,9 +131,9 @@ again:
     pfd.fd = fd;
     pfd.events = POLLIN;
     *err = errno = 0;
-    int ret = poll(&pfd, 1, timeout_ms);
+    int ret = TEMP_FAILURE_RETRY(poll(&pfd, 1, timeout_ms));
     if (ret < 0) {
-        LOGE("poll() error\n");
+        ALOGE("poll() error\n");
         *err = errno;
         return NULL;
     }
@@ -142,7 +142,7 @@ again:
     }
 
     if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
-        LOGW("RFCOMM poll() returned  success (%d), "
+        ALOGW("RFCOMM poll() returned  success (%d), "
              "but with an unexpected revents bitmask: %#x\n", ret, pfd.revents);
         errno = EIO;
         *err = errno;
@@ -152,19 +152,19 @@ again:
     while ((int)(bufit - buf) < (len - 1))
     {
         errno = 0;
-        int rc = read(fd, bufit, 1);
+        int rc = TEMP_FAILURE_RETRY(read(fd, bufit, 1));
 
         if (!rc)
             break;
 
         if (rc < 0) {
             if (errno == EBUSY) {
-                LOGI("read() error %s (%d): repeating read()...",
+                ALOGI("read() error %s (%d): repeating read()...",
                      strerror(errno), errno);
                 goto again;
             }
             *err = errno;
-            LOGE("read() error %s (%d)", strerror(errno), errno);
+            ALOGE("read() error %s (%d)", strerror(errno), errno);
             return NULL;
         }
 
@@ -194,88 +194,10 @@ again:
     return buf;
 }
 
-// specialized version of get_line that terminates on ESC(abort) or Ctrl-Z
-
-static const char* get_PDUline(int fd, char *buf, int len, int timeout_ms,
-                            int *err) {
-    char *bufit=buf;
-    int fd_flags = fcntl(fd, F_GETFL, 0);
-    struct pollfd pfd;
-
-again:
-    *bufit = 0;
-    pfd.fd = fd;
-    pfd.events = POLLIN;
-    *err = errno = 0;
-    int ret = poll(&pfd, 1, timeout_ms);
-    if (ret < 0) {
-        LOGE("poll() error\n");
-        *err = errno;
-        return NULL;
-    }
-    if (ret == 0) {
-        return NULL;
-    }
-
-    if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
-        LOGW("RFCOMM poll() returned  success (%d), "
-             "but with an unexpected revents bitmask: %#x\n", ret, pfd.revents);
-        errno = EIO;
-        *err = errno;
-        return NULL;
-    }
-
-    while ((int)(bufit - buf) < (len - 1))
-    {
-        errno = 0;
-        int rc = read(fd, bufit, 1);
-
-        if (!rc)
-            break;
-
-        if (rc < 0) {
-            if (errno == EBUSY) {
-                LOGI("read() error %s (%d): repeating read()...",
-                     strerror(errno), errno);
-                goto again;
-            }
-            *err = errno;
-            LOGE("read() error %s (%d)", strerror(errno), errno);
-            return NULL;
-        }
-
-        if (*bufit == '\x1b') { // ESC  - cause a string containing only ESC to be returned
-            *buf = '\x1b';
-            bufit = buf+1;
-            break;
-        }
-
-        if (*bufit=='\x1a') { // ctrl-z
-            break;
-        }
-
-        bufit++;
-    }
-
-    *bufit = NULL;
-
-    // According to ITU V.250 section 5.1, IA5 7 bit chars are used,
-    //   the eighth bit or higher bits are ignored if they exists
-    // We mask out only eighth bit, no higher bit, since we do char
-    // string here, not wide char.
-    // We added this processing due to 2 real world problems.
-    // 1 BMW 2005 E46 which sends binary junk
-    // 2 Audi 2010 A3, dial command use 0xAD (soft-hyphen) as number
-    //   formater, which was rejected by the AT handler
-    mask_eighth_bit(buf);
-
-    return buf;
-}
-
 #endif
 
 static void classInitNative(JNIEnv* env, jclass clazz) {
-    LOGV("%s", __FUNCTION__);
+    ALOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     field_mNativeData = get_field(env, clazz, "mNativeData", "I");
     field_mAddress = get_field(env, clazz, "mAddress", "Ljava/lang/String;");
@@ -286,11 +208,11 @@ static void classInitNative(JNIEnv* env, jclass clazz) {
 
 static void initializeNativeDataNative(JNIEnv* env, jobject object,
                                        jint socketFd) {
-    LOGV("%s", __FUNCTION__);
+    ALOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat = (native_data_t *)calloc(1, sizeof(native_data_t));
     if (NULL == nat) {
-        LOGE("%s: out of memory!", __FUNCTION__);
+        ALOGE("%s: out of memory!", __FUNCTION__);
         return;
     }
 
@@ -303,12 +225,12 @@ static void initializeNativeDataNative(JNIEnv* env, jobject object,
     nat->rfcomm_sock = socketFd;
     nat->rfcomm_connected = socketFd >= 0;
     if (nat->rfcomm_connected)
-        LOGI("%s: ALREADY CONNECTED!", __FUNCTION__);
+        ALOGI("%s: ALREADY CONNECTED!", __FUNCTION__);
 #endif
 }
 
 static void cleanupNativeDataNative(JNIEnv* env, jobject object) {
-    LOGV("%s", __FUNCTION__);
+    ALOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat =
         (native_data_t *)env->GetIntField(object, field_mNativeData);
@@ -321,7 +243,7 @@ static void cleanupNativeDataNative(JNIEnv* env, jobject object) {
 
 static jboolean connectNative(JNIEnv *env, jobject obj)
 {
-    LOGV("%s", __FUNCTION__);
+    ALOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     int lm;
     struct sockaddr_rc addr;
@@ -330,7 +252,7 @@ static jboolean connectNative(JNIEnv *env, jobject obj)
     nat->rfcomm_sock = socket(PF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
 
     if (nat->rfcomm_sock < 0) {
-        LOGE("%s: Could not create RFCOMM socket: %s\n", __FUNCTION__,
+        ALOGE("%s: Could not create RFCOMM socket: %s\n", __FUNCTION__,
              strerror(errno));
         return JNI_FALSE;
     }
@@ -343,7 +265,7 @@ static jboolean connectNative(JNIEnv *env, jobject obj)
 
     if (lm && setsockopt(nat->rfcomm_sock, SOL_RFCOMM, RFCOMM_LM, &lm,
                 sizeof(lm)) < 0) {
-        LOGE("%s: Can't set RFCOMM link mode", __FUNCTION__);
+        ALOGE("%s: Can't set RFCOMM link mode", __FUNCTION__);
         close(nat->rfcomm_sock);
         return JNI_FALSE;
     }
@@ -357,7 +279,7 @@ static jboolean connectNative(JNIEnv *env, jobject obj)
         if (connect(nat->rfcomm_sock, (struct sockaddr *)&addr,
                       sizeof(addr)) < 0) {
             if (errno == EINTR) continue;
-            LOGE("%s: connect() failed: %s\n", __FUNCTION__, strerror(errno));
+            ALOGE("%s: connect() failed: %s\n", __FUNCTION__, strerror(errno));
             close(nat->rfcomm_sock);
             nat->rfcomm_sock = -1;
             return JNI_FALSE;
@@ -373,13 +295,13 @@ static jboolean connectNative(JNIEnv *env, jobject obj)
 }
 
 static jint connectAsyncNative(JNIEnv *env, jobject obj) {
-    LOGV("%s", __FUNCTION__);
+    ALOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     struct sockaddr_rc addr;
     native_data_t *nat = get_native_data(env, obj);
 
     if (nat->rfcomm_connected) {
-        LOGV("RFCOMM socket is already connected or connection is in progress.");
+        ALOGV("RFCOMM socket is already connected or connection is in progress.");
         return 0;
     }
 
@@ -388,7 +310,7 @@ static jint connectAsyncNative(JNIEnv *env, jobject obj) {
 
         nat->rfcomm_sock = socket(PF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
         if (nat->rfcomm_sock < 0) {
-            LOGE("%s: Could not create RFCOMM socket: %s\n", __FUNCTION__,
+            ALOGE("%s: Could not create RFCOMM socket: %s\n", __FUNCTION__,
                  strerror(errno));
             return -1;
         }
@@ -401,11 +323,11 @@ static jint connectAsyncNative(JNIEnv *env, jobject obj) {
 
         if (lm && setsockopt(nat->rfcomm_sock, SOL_RFCOMM, RFCOMM_LM, &lm,
                     sizeof(lm)) < 0) {
-            LOGE("%s: Can't set RFCOMM link mode", __FUNCTION__);
+            ALOGE("%s: Can't set RFCOMM link mode", __FUNCTION__);
             close(nat->rfcomm_sock);
             return -1;
         }
-        LOGI("Created RFCOMM socket fd %d.", nat->rfcomm_sock);
+        ALOGI("Created RFCOMM socket fd %d.", nat->rfcomm_sock);
     }
 
     memset(&addr, 0, sizeof(struct sockaddr_rc));
@@ -425,20 +347,20 @@ static jint connectAsyncNative(JNIEnv *env, jobject obj) {
 
             if (rc >= 0) {
                 nat->rfcomm_connected = 1;
-                LOGI("async connect successful");
+                ALOGI("async connect successful");
                 return 0;
             }
             else if (rc < 0) {
                 if (errno == EINPROGRESS || errno == EAGAIN)
                 {
-                    LOGI("async connect is in progress (%s)",
+                    ALOGI("async connect is in progress (%s)",
                          strerror(errno));
                     nat->rfcomm_connected = -1;
                     return 0;
                 }
                 else
                 {
-                    LOGE("async connect error: %s (%d)", strerror(errno), errno);
+                    ALOGE("async connect error: %s (%d)", strerror(errno), errno);
                     close(nat->rfcomm_sock);
                     nat->rfcomm_sock = -1;
                     return -errno;
@@ -452,7 +374,7 @@ static jint connectAsyncNative(JNIEnv *env, jobject obj) {
 
 static jint waitForAsyncConnectNative(JNIEnv *env, jobject obj,
                                            jint timeout_ms) {
-    LOGV("%s", __FUNCTION__);
+    ALOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     struct sockaddr_rc addr;
     native_data_t *nat = get_native_data(env, obj);
@@ -460,19 +382,19 @@ static jint waitForAsyncConnectNative(JNIEnv *env, jobject obj,
     env->SetIntField(obj, field_mTimeoutRemainingMs, timeout_ms);
 
     if (nat->rfcomm_connected > 0) {
-        LOGI("RFCOMM is already connected!");
+        ALOGI("RFCOMM is already connected!");
         return 1;
     }
 
     if (nat->rfcomm_sock >= 0 && nat->rfcomm_connected == 0) {
-        LOGI("Re-opening RFCOMM socket.");
+        ALOGI("Re-opening RFCOMM socket.");
         close(nat->rfcomm_sock);
         nat->rfcomm_sock = -1;
     }
     int ret = connectAsyncNative(env, obj);
 
     if (ret < 0) {
-        LOGI("Failed to re-open RFCOMM socket!");
+        ALOGI("Failed to re-open RFCOMM socket!");
         return ret;
     }
 
@@ -498,14 +420,14 @@ static jint waitForAsyncConnectNative(JNIEnv *env, jobject obj,
 
         if (timeout_ms > 0) {
             jint remaining = to.tv_sec*1000 + to.tv_usec/1000;
-            LOGV("Remaining time %ldms", (long)remaining);
+            ALOGV("Remaining time %ldms", (long)remaining);
             env->SetIntField(obj, field_mTimeoutRemainingMs,
                              remaining);
         }
 
         if (n <= 0) {
             if (n < 0)  {
-                LOGE("select() on RFCOMM socket: %s (%d)",
+                ALOGE("select() on RFCOMM socket: %s (%d)",
                      strerror(errno),
                      errno);
                 return -errno;
@@ -514,7 +436,7 @@ static jint waitForAsyncConnectNative(JNIEnv *env, jobject obj,
         }
         /* n must be equal to 1 and either rset or wset must have the
            file descriptor set. */
-        LOGV("select() returned %d.", n);
+        ALOGV("select() returned %d.", n);
         if (FD_ISSET(nat->rfcomm_sock, &rset) ||
             FD_ISSET(nat->rfcomm_sock, &wset))
         {
@@ -522,13 +444,13 @@ static jint waitForAsyncConnectNative(JNIEnv *env, jobject obj,
             {
                 char ch;
                 errno = 0;
-                int nr = read(nat->rfcomm_sock, &ch, 1);
+                int nr = TEMP_FAILURE_RETRY(read(nat->rfcomm_sock, &ch, 1));
                 /* It should be that nr != 1 because we just opened a socket
                    and we haven't sent anything over it for the other side to
                    respond... but one can't be paranoid enough.
                 */
                 if (nr >= 0 || errno != EAGAIN) {
-                    LOGE("RFCOMM async connect() error: %s (%d), nr = %d\n",
+                    ALOGE("RFCOMM async connect() error: %s (%d), nr = %d\n",
                          strerror(errno),
                          errno,
                          nr);
@@ -546,19 +468,19 @@ static jint waitForAsyncConnectNative(JNIEnv *env, jobject obj,
             }
             /* Restore the blocking properties of the socket. */
             fcntl(nat->rfcomm_sock, F_SETFL, nat->rfcomm_sock_flags);
-            LOGI("Successful RFCOMM socket connect.");
+            ALOGI("Successful RFCOMM socket connect.");
             nat->rfcomm_connected = 1;
             return 1;
         }
     }
-    else LOGE("RFCOMM socket file descriptor %d is bad!",
+    else ALOGE("RFCOMM socket file descriptor %d is bad!",
               nat->rfcomm_sock);
 #endif
     return -1;
 }
 
 static void disconnectNative(JNIEnv *env, jobject obj) {
-    LOGV("%s", __FUNCTION__);
+    ALOGV("%s", __FUNCTION__);
 #ifdef HAVE_BLUETOOTH
     native_data_t *nat = get_native_data(env, obj);
     if (nat->rfcomm_sock >= 0) {
@@ -589,7 +511,7 @@ static void pretty_log_urc(const char *urc) {
             }
         }
     }
-    IF_LOGV() LOG(LOG_VERBOSE, "Bluetooth AT sent", "%s", buf);
+    IF_ALOGV() ALOG(LOG_VERBOSE, "Bluetooth AT sent", "%s", buf);
 
     free(buf);
 }
